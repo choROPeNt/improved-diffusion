@@ -2,9 +2,7 @@
 set -e
 
 DATA_FLAGS="\
---data_dir /data/horse/ws/dchristi-diffusion/dataset/Thinlayer\ 2-2_2023-04-28_124148/patches \
---small_size 128 \
---dir /data/horse/ws/dchristi-diffusion/checkpoints/super_res_128_to_256
+--data_dir ./data\
 "
 
 MODEL_FLAGS="\
@@ -32,7 +30,7 @@ printf "DIFFUSION_FLAGS:\n%s\n" "$DIFFUSION_FLAGS"
 printf "TRAIN_FLAGS:\n%s\n" "$TRAIN_FLAGS"
 
 python scripts/super_res_train.py \
-    # $DATA_FLAGS \
+    $DATA_FLAGS \
     $MODEL_FLAGS \
     $DIFFUSION_FLAGS \
     $TRAIN_FLAGS
