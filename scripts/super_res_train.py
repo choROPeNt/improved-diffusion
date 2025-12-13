@@ -1,10 +1,14 @@
 """
 Train a super-resolution model.
 """
+from __future__ import annotations
+from typing import Optional, Sequence, Tuple
 
 import argparse
 
 import torch.nn.functional as F
+import torch
+import torch.distributed as dist
 
 from improved_diffusion import dist_util, logger
 from improved_diffusion.image_datasets import load_data
@@ -17,51 +21,74 @@ from improved_diffusion.script_util import (
 )
 from improved_diffusion.train_util import TrainLoop
 
+from torchinfo import summary
 
 def main():
     args = create_argparser().parse_args()
 
-    # dist_util.setup_dist()
-    # logger.configure()
+    dist_util.setup_dist()
+    logger.configure()
 
-    # logger.log("creating model...")
-    # model, diffusion = sr_create_model_and_diffusion(
-    #     **args_to_dict(args, sr_model_and_diffusion_defaults().keys())
-    # )
-    # model.to(dist_util.dev())
-    # schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion)
+    logger.log("creating model...")
+    model, diffusion = sr_create_model_and_diffusion(
+        **args_to_dict(args, sr_model_and_diffusion_defaults().keys())
+    )
+    model.to(dist_util.dev())
+
+    logger.log(f"using device: {dist_util.dev()}")
+
+    ddpm_torchinfo(
+        model,
+        image_size=(256, 256),
+        low_res_size=(128, 128),
+        channels=3,
+        diffusion_steps=4000,
+    )
+
+
+
+    logger.log("creating schedule sampler...")
+    schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion)
 
     
 
-    # logger.log("creating data loader...")
-    # data = load_superres_data(
-    #     args.data_dir,
-    #     args.batch_size,
-    #     large_size=args.large_size,
-    #     small_size=args.small_size,
-    #     class_cond=args.class_cond,
-    # )
+    logger.log("creating data loader...")
+    data = load_superres_data(
+        args.data_dir,
+        args.batch_size,
+        large_size=args.large_size,
+        small_size=args.small_size,
+        class_cond=args.class_cond,
+    )
+
+    for batch, cond in data:
+        print(batch.shape)
+        print(cond.keys())
+        print(cond["low_res"].shape)
+        break
     
-    # logger.log(f"data loader created with {type(data)} batches")
-    # logger.log("training...")
+    logger.log(f"data loader created: {data}")
+    logger.log(f"data type: {type(data)}")
+    logger.log(f"dataset path: {args.data_dir}")
+    logger.log("training...")
     
-    # TrainLoop(
-    #     model=model,
-    #     diffusion=diffusion,
-    #     data=data,
-    #     batch_size=args.batch_size,
-    #     microbatch=args.microbatch,
-    #     lr=args.lr,
-    #     ema_rate=args.ema_rate,
-    #     log_interval=args.log_interval,
-    #     save_interval=args.save_interval,
-    #     resume_checkpoint=args.resume_checkpoint,
-    #     use_fp16=args.use_fp16,
-    #     fp16_scale_growth=args.fp16_scale_growth,
-    #     schedule_sampler=schedule_sampler,
-    #     weight_decay=args.weight_decay,
-    #     lr_anneal_steps=args.lr_anneal_steps,
-    # ).run_loop()
+    TrainLoop(
+        model=model,
+        diffusion=diffusion,
+        data=data,
+        batch_size=args.batch_size,
+        microbatch=args.microbatch,
+        lr=args.lr,
+        ema_rate=args.ema_rate,
+        log_interval=args.log_interval,
+        save_interval=args.save_interval,
+        resume_checkpoint=args.resume_checkpoint,
+        use_fp16=args.use_fp16,
+        fp16_scale_growth=args.fp16_scale_growth,
+        schedule_sampler=schedule_sampler,
+        weight_decay=args.weight_decay,
+        lr_anneal_steps=args.lr_anneal_steps,
+    ).run_loop()
 
 
 def load_superres_data(data_dir, batch_size, large_size, small_size, class_cond=False):
@@ -96,6 +123,108 @@ def create_argparser():
     parser = argparse.ArgumentParser()
     add_dict_to_argparser(parser, defaults)
     return parser
+
+def ddpm_torchinfo(
+    model: torch.nn.Module,
+    image_size: Tuple[int, int] = (256, 256),
+    channels: int = 3,
+    batch_size: int = 1,
+    diffusion_steps: int = 1000,
+    device: Optional[torch.device] = None,
+    low_res_size: Optional[Tuple[int, int]] = None,
+    depth: int = 3,
+    verbose: int = 1,
+    ):
+    """
+    Torchinfo summary for diffusion UNets.
+
+    Supports:
+      - standard DDPM: forward(x, timesteps, ...)
+      - super-res DDPM: forward(x, timesteps, low_res, ...) or forward(x, timesteps, low_res=...)
+
+    Parameters
+    ----------
+    model : nn.Module
+        Your diffusion UNet / SuperResModel.
+    image_size : (H, W)
+        Spatial size for x (usually the training image_size).
+    channels : int
+        Channels for x (usually 3 or 1).
+    batch_size : int
+        Batch size for summary forward pass.
+    diffusion_steps : int
+        Max timestep range. We'll sample timesteps in [0, diffusion_steps).
+    device : torch.device or None
+        If None, uses model's device.
+    low_res_size : (h, w) or None
+        If provided, passes low_res conditioning tensor of this size.
+    depth : int
+        torchinfo depth.
+    verbose : int
+        torchinfo verbosity.
+
+    Returns
+    -------
+    torchinfo.ModelStatistics or None
+    """
+    # Only run on rank 0 if DDP is active
+    if dist.is_available() and dist.is_initialized() and dist.get_rank() != 0:
+        return None
+
+    model.eval()
+
+    # pick device
+    if device is None:
+        try:
+            device = next(model.parameters()).device
+        except StopIteration:
+            device = torch.device("cpu")
+
+    H, W = image_size
+    x = torch.randn(batch_size, channels, H, W, device=device)
+
+    t = torch.randint(
+        low=0,
+        high=int(diffusion_steps),
+        size=(batch_size,),
+        device=device,
+        dtype=torch.long,
+    )
+
+    # Try calling forward with (x, t, low_res) first if low_res_size is given.
+    # If forward expects low_res as kwarg, we catch and retry.
+    if low_res_size is not None:
+        h, w = low_res_size
+        low_res = torch.randn(batch_size, channels, h, w, device=device)
+
+        try:
+            return summary(
+                model,
+                input_data=(x, t, low_res),
+                device=device.type,
+                depth=depth,
+                verbose=verbose,
+            )
+        except TypeError:
+            # fallback: low_res passed as kwarg
+            return summary(
+                model,
+                input_data=(x, t),
+                kwargs={"low_res": low_res},
+                device=device.type,
+                depth=depth,
+                verbose=verbose,
+            )
+
+    # Standard DDPM case
+    return summary(
+        model,
+        input_data=(x, t),
+        device=device.type,
+        depth=depth,
+        verbose=verbose,
+    )
+
 
 
 if __name__ == "__main__":
