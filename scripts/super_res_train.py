@@ -31,6 +31,8 @@ def main():
     model.to(dist_util.dev())
     schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion)
 
+    
+
     logger.log("creating data loader...")
     data = load_superres_data(
         args.data_dir,
