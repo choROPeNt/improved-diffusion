@@ -68,7 +68,8 @@ class TrainLoop:
 
         self.step = 0
         self.resume_step = 0
-        self.global_batch = self.batch_size * dist.get_world_size()
+        world_size = dist.get_world_size() if dist.is_available() and dist.is_initialized() else 1
+        self.global_batch = self.batch_size * world_size
 
         self.model_params = list(self.model.parameters())
         self.master_params = self.model_params
