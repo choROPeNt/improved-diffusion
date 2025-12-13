@@ -41,8 +41,10 @@ def main():
         small_size=args.small_size,
         class_cond=args.class_cond,
     )
-
+    
+    logger.log(f"data loader created with {type(data)} batches")
     logger.log("training...")
+    
     TrainLoop(
         model=model,
         diffusion=diffusion,

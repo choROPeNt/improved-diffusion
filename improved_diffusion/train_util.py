@@ -4,7 +4,7 @@ import os
 
 import blobfile as bf
 import numpy as np
-import torch as th
+import torch 
 import torch.distributed as dist
 from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 from torch.optim import AdamW
@@ -73,7 +73,7 @@ class TrainLoop:
         self.model_params = list(self.model.parameters())
         self.master_params = self.model_params
         self.lg_loss_scale = INITIAL_LOG_LOSS_SCALE
-        self.sync_cuda = th.cuda.is_available()
+        self.sync_cuda = torch.cuda.is_available()
 
         self._load_and_sync_parameters()
         if self.use_fp16:
@@ -92,7 +92,7 @@ class TrainLoop:
                 copy.deepcopy(self.master_params) for _ in range(len(self.ema_rate))
             ]
 
-        if th.cuda.is_available():
+        if torch.cuda.is_available():
             self.use_ddp = True
             self.ddp_model = DDP(
                 self.model,
@@ -226,7 +226,7 @@ class TrainLoop:
                 loss.backward()
 
     def optimize_fp16(self):
-        if any(not th.isfinite(p.grad).all() for p in self.model_params):
+        if any(not torch.isfinite(p.grad).all() for p in self.model_params):
             self.lg_loss_scale -= 1
             logger.log(f"Found NaN, decreased lg_loss_scale to {self.lg_loss_scale}")
             return
@@ -278,7 +278,7 @@ class TrainLoop:
                 else:
                     filename = f"ema_{rate}_{(self.step+self.resume_step):06d}.pt"
                 with bf.BlobFile(bf.join(get_blob_logdir(), filename), "wb") as f:
-                    th.save(state_dict, f)
+                    torch.save(state_dict, f)
 
         save_checkpoint(0, self.master_params)
         for rate, params in zip(self.ema_rate, self.ema_params):
@@ -289,7 +289,7 @@ class TrainLoop:
                 bf.join(get_blob_logdir(), f"opt{(self.step+self.resume_step):06d}.pt"),
                 "wb",
             ) as f:
-                th.save(self.opt.state_dict(), f)
+                torch.save(self.opt.state_dict(), f)
 
         dist.barrier()
 
