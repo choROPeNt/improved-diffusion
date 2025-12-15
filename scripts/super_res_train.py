@@ -1,15 +1,21 @@
 """
 Train a super-resolution model.
 """
+
 from __future__ import annotations
+import sys
+
 from typing import Optional, Sequence, Tuple
+
+import os
 
 import argparse
 
-import torch.nn.functional as F
 import torch
+import torch.nn.functional as F
 import torch.distributed as dist
 
+# from improved_diffusion import logger
 from improved_diffusion import dist_util, logger
 from improved_diffusion.image_datasets import load_data
 from improved_diffusion.resample import create_named_schedule_sampler
@@ -24,10 +30,30 @@ from improved_diffusion.train_util import TrainLoop
 from torchinfo import summary
 
 def main():
+    
+    
     args = create_argparser().parse_args()
-
+    
+    
     dist_util.setup_dist()
-    logger.configure()
+ 
+    status = _dist_status()
+    logger.configure(dir = args.dir)
+
+    logger.log("Loading super-resolution training script...")
+    logger.log("Setting up distributed...")
+    logger.log(
+        "Runtime setup | "
+        f"mode={status['mode']} | "
+        f"backend={status['backend']} | "
+        f"rank={status['rank']}/{status['world_size']} | "
+        f"cuda={torch.cuda.is_available()} | "
+        f"gpus={torch.cuda.device_count()} | "
+        f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES')} | "
+        f"MPS={torch.backends.mps.is_available()}"
+    )
+ 
+
 
     logger.log("creating model...")
     model, diffusion = sr_create_model_and_diffusion(
@@ -44,8 +70,6 @@ def main():
         channels=3,
         diffusion_steps=4000,
     )
-
-
 
     logger.log("creating schedule sampler...")
     schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion)
@@ -102,10 +126,28 @@ def load_superres_data(data_dir, batch_size, large_size, small_size, class_cond=
         model_kwargs["low_res"] = F.interpolate(large_batch, small_size, mode="area")
         yield large_batch, model_kwargs
 
+def _dist_status():
+    if dist.is_available() and dist.is_initialized():
+        return {
+            "mode": "distributed",
+            "backend": dist.get_backend(),
+            "rank": dist.get_rank(),
+            "world_size": dist.get_world_size(),
+        }
+    else:
+        return {
+            "mode": "single-process",
+            "backend": None,
+            "rank": 0,
+            "world_size": 1,
+        }
+
+
 
 def create_argparser():
     defaults = dict(
         data_dir="",
+        dir="",
         schedule_sampler="uniform",
         lr=1e-4,
         weight_decay=0.0,
