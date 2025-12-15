@@ -11,6 +11,7 @@ slurm_out/
 predict/
 results/
 .vscode/
+out/
 scripts/archiv
 ## Labelbox ap key
 api_key.txt
