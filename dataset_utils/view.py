@@ -20,7 +20,7 @@ if __name__ == "__main__":
     
     print(vf(x))
 
-    savefig = False
+    savefig = True
     plt.figure(figsize=(4, 4))
     plt.imshow(x, cmap='gray')
     plt.tight_layout()
