@@ -24,7 +24,7 @@ def main():
     args = create_argparser().parse_args()
 
     dist_util.setup_dist()
-    logger.configure()
+    logger.configure(dir=args.dir)
 
     logger.log("creating model...")
     model, diffusion = sr_create_model_and_diffusion(
@@ -100,12 +100,13 @@ def load_data_for_worker(base_samples, batch_size, class_cond):
 
 def create_argparser():
     defaults = dict(
-        clip_denoised=True,
-        num_samples=10000,
-        batch_size=16,
-        use_ddim=False,
-        base_samples="",
-        model_path="",
+        clip_denoised = True,
+        num_samples = 10000,
+        batch_size = 16,
+        use_ddim = False,
+        base_samples = "",
+        model_path = "",
+        dir = None
     )
     defaults.update(sr_model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
