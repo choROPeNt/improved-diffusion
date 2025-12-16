@@ -47,7 +47,7 @@ def _get_mpi():
 def setup_dist(
     allow_mps_single_process: bool = True,
     timeout_seconds: int = 120,
-) -> None:
+    ) -> None:
     """
     Setup a distributed process group.
 
@@ -116,15 +116,32 @@ def setup_dist(
     os.environ["RANK"] = str(rank)
     os.environ["WORLD_SIZE"] = str(world_size)
 
-    # Bind CUDA device deterministically
+
+    # Bind CUDA device deterministically (per-node local rank)
+    device_id = None
     if torch.cuda.is_available():
-        local_gpu = rank % GPUS_PER_NODE
-        torch.cuda.set_device(local_gpu)
+        # Prefer launcher-provided local rank (works with OpenMPI + Slurm)
+        local_rank = int(
+            os.environ.get("OMPI_COMM_WORLD_LOCAL_RANK")
+            or os.environ.get("SLURM_LOCALID")
+            or "0"
+        )
+
+        # If Slurm/MPI already constrains visibility (CUDA_VISIBLE_DEVICES),
+        # local_rank should index into that visible set.
+        n_visible = torch.cuda.device_count()
+        if n_visible <= 0:
+            raise RuntimeError("CUDA reported available but no visible devices found.")
+
+        local_rank = local_rank % n_visible
+        torch.cuda.set_device(local_rank)
+        device_id = torch.device("cuda", local_rank)
 
     dist.init_process_group(
         backend=backend,
         init_method="env://",
         timeout=datetime.timedelta(seconds=timeout_seconds),
+        device_id=device_id,  # silences barrier() warning and makes intent explicit
     )
 
 
@@ -185,8 +202,9 @@ def sync_params(params):
         return
     if dist.get_world_size() == 1:
         return
-    for p in params:
-        dist.broadcast(p, src=0)
+    with torch.no_grad():
+        for p in params:
+            dist.broadcast(p, src=0)
 
 
 def _find_free_port() -> int:
