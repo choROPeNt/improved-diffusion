@@ -36,24 +36,10 @@ def main():
     
     
     dist_util.setup_dist()
- 
-    status = _dist_status()
+
     logger.configure(dir = args.dir)
 
-    logger.log("Loading super-resolution training script...")
-    logger.log("Setting up distributed...")
-    logger.log(
-        "Runtime setup | "
-        f"mode={status['mode']} | "
-        f"backend={status['backend']} | "
-        f"rank={status['rank']}/{status['world_size']} | "
-        f"cuda={torch.cuda.is_available()} | "
-        f"gpus={torch.cuda.device_count()} | "
-        f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES')} | "
-        f"MPS={torch.backends.mps.is_available()}"
-    )
- 
-
+    log_rank_gpu_mapping(logger)
 
     logger.log("creating model...")
     model, diffusion = sr_create_model_and_diffusion(
@@ -61,7 +47,6 @@ def main():
     )
     model.to(dist_util.dev())
 
-    logger.log(f"using device: {dist_util.dev()}")
 
     ddpm_torchinfo(
         model,
@@ -85,11 +70,11 @@ def main():
         class_cond=args.class_cond,
     )
 
-    for batch, cond in data:
-        print(batch.shape)
-        print(cond.keys())
-        print(cond["low_res"].shape)
-        break
+    # for batch, cond in data:
+    #     print(batch.shape)
+    #     print(cond.keys())
+    #     print(cond["low_res"].shape)
+    #     break
     
     logger.log(f"data loader created: {data}")
     logger.log(f"data type: {type(data)}")
@@ -165,6 +150,39 @@ def create_argparser():
     parser = argparse.ArgumentParser()
     add_dict_to_argparser(parser, defaults)
     return parser
+
+def log_rank_gpu_mapping(logger, banner="Distributed setup"):
+    rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
+    ws = dist.get_world_size() if dist.is_available() and dist.is_initialized() else 1
+    host = os.uname().nodename
+    cvd = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+
+    if torch.cuda.is_available():
+        local_idx = torch.cuda.current_device()
+        props = torch.cuda.get_device_properties(local_idx)
+
+        # props.pci_bus_id can appear as an int in some builds; format consistently
+        pci = getattr(props, "pci_bus_id", None)
+        if isinstance(pci, int):
+            # best-effort: show both decimal and hex
+            pci_str = f"{pci} (0x{pci:x})"
+        else:
+            pci_str = str(pci)
+
+        msg = (
+            f"[rank {rank}/{ws} | host {host}] "
+            f"CVD={cvd} | torch_device=cuda:{local_idx} | "
+            f"gpu={props.name} | pci_bus_id={pci_str}"
+        )
+    else:
+        msg = f"[rank {rank}/{ws} | host {host}] CVD={cvd} | cuda=False"
+
+    # Print from every rank (debugging). Log banner only on rank 0.
+    if rank == 0:
+        logger.log(banner)
+    print(msg, flush=True)
+    sys.stdout.flush()
+
 
 def ddpm_torchinfo(
     model: torch.nn.Module,
