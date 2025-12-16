@@ -55,8 +55,8 @@ mpiexec -n ${SLURM_NTASKS} bash -lc '
     --data_dir "/data/horse/ws/dchristi-diffusion/dataset/Thinlayer 2-2_2023-04-28_124148/patches" \
     --dir "/data/horse/ws/dchristi-diffusion/checkpoints/super-res-256x256_2x" \
     --large_size 256 \
-    --small_size 128 \
-    --lr 3e-4 \
+    --small_size 64 \
+    --lr 1e-4 \
     --batch_size 4 \
     --num_channels 192 \
     --num_res_blocks 2 \
