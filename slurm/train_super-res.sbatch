@@ -53,7 +53,7 @@ mpiexec -n ${SLURM_NTASKS} bash -lc '
   export CUDA_VISIBLE_DEVICES=$OMPI_COMM_WORLD_LOCAL_RANK
   exec python scripts/super_res_train.py \
     --data_dir "/data/horse/ws/dchristi-diffusion/dataset/Thinlayer 2-2_2023-04-28_124148/patches" \
-    --dir "/data/horse/ws/dchristi-diffusion/checkpoints/super-res-256x256_2x" \
+    --dir "/data/horse/ws/dchristi-diffusion/checkpoints/super-res-256x256_4x" \
     --large_size 256 \
     --small_size 64 \
     --lr 1e-4 \
