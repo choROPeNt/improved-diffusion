@@ -19,13 +19,13 @@ if __name__ == "__main__":
         pass
     
     print(vf(x))
-
+    print(x.max(),x.min())
     savefig = True
     plt.figure(figsize=(4, 4))
-    plt.imshow(x, cmap='gray')
+    plt.imshow(x, cmap='gray', vmax=x.max(), vmin=x.min())
     plt.tight_layout()
     if y is not None:
-        plt.title(y)
+        plt.title(y,vmax=y.max(), vmin=y.min() )
     if savefig:
         plt.savefig('plot.png', dpi=600, bbox_inches='tight')
     else:
