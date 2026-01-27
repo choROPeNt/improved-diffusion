@@ -533,15 +533,56 @@ class SuperResModel(UNetModel):
     def __init__(self, in_channels, *args, **kwargs):
         super().__init__(in_channels * 2, *args, **kwargs)
 
+    @staticmethod
+    def _upsample_to_match(low_res: th.Tensor, x: th.Tensor) -> th.Tensor:
+        if low_res is None:
+            raise ValueError("SuperResModelND requires low_res (got None).")
+
+        if x.dim() == 4:
+            # [N,C,H,W]
+            _, _, H, W = x.shape
+            return F.interpolate(
+                low_res,
+                size=(H, W),
+                mode="bilinear",
+                align_corners=False,
+            )
+        elif x.dim() == 5:
+            # [N,C,D,H,W]
+            _, _, D, H, W = x.shape
+            return F.interpolate(
+                low_res,
+                size=(D, H, W),
+                mode="trilinear",
+                align_corners=False,
+            )
+        else:
+            raise ValueError(f"Expected x to be 4D or 5D, got shape {tuple(x.shape)}.")
+
+
+
     def forward(self, x, timesteps, low_res=None, **kwargs):
-        _, _, new_height, new_width = x.shape
-        upsampled = F.interpolate(low_res, (new_height, new_width), mode="bilinear")
+        
+        if low_res is None:
+            raise ValueError(
+                "SuperResModel requires `low_res` input, but got None. "
+                "Call model(x, t, low_res=...)"
+            )
+
+        upsampled = self._upsample_to_match(low_res, x)
         x = th.cat([x, upsampled], dim=1)
         return super().forward(x, timesteps, **kwargs)
 
     def get_feature_vectors(self, x, timesteps, low_res=None, **kwargs):
-        _, new_height, new_width, _ = x.shape
-        upsampled = F.interpolate(low_res, (new_height, new_width), mode="bilinear")
+
+        if low_res is None:
+            raise ValueError(
+                "SuperResModel requires `low_res` input, but got None. "
+                "Call model(x, t, low_res=...)"
+            )
+
+
+        upsampled = self._upsample_to_match(low_res, x)
         x = th.cat([x, upsampled], dim=1)
         return super().get_feature_vectors(x, timesteps, **kwargs)
 
