@@ -137,6 +137,8 @@ def sr_model_and_diffusion_defaults():
 
 
 def sr_create_model_and_diffusion(
+    in_channel,
+    dims,
     large_size,
     small_size,
     class_cond,
@@ -158,6 +160,8 @@ def sr_create_model_and_diffusion(
     use_scale_shift_norm,
 ):
     model = sr_create_model(
+        in_channel,
+        dims,
         large_size,
         small_size,
         num_channels,
@@ -185,6 +189,8 @@ def sr_create_model_and_diffusion(
 
 
 def sr_create_model(
+    in_channel,
+    dims,
     large_size,
     small_size,
     num_channels,
@@ -212,9 +218,10 @@ def sr_create_model(
         attention_ds.append(large_size // int(res))
 
     return SuperResModel(
-        in_channels=3,
+        in_channels=in_channel,
+        dims=dims,
         model_channels=num_channels,
-        out_channels=(3 if not learn_sigma else 6),
+        out_channels=(in_channel if not learn_sigma else 2*in_channel),
         num_res_blocks=num_res_blocks,
         attention_resolutions=tuple(attention_ds),
         dropout=dropout,
