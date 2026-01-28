@@ -568,7 +568,6 @@ class SuperResModel(UNetModel):
             raise ValueError(f"Expected x to be 4D or 5D, got shape {tuple(x.shape)}.")
 
 
-
     def forward(self, x, timesteps, low_res=None, **kwargs):
         
         if low_res is None:
