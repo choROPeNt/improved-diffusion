@@ -25,6 +25,8 @@ from improved_diffusion.script_util import (
     args_to_dict,
     add_dict_to_argparser,
 )
+
+
 from improved_diffusion.train_util import TrainLoop
 
 from torchinfo import summary
@@ -48,13 +50,13 @@ def main():
     model.to(dist_util.dev())
 
 
-    ddpm_torchinfo(
-        model,
-        image_size=(256, 256),
-        low_res_size=(128, 128),
-        channels=3,
-        diffusion_steps=4000,
-    )
+    # ddpm_torchinfo(
+    #     model,
+    #     image_size=(256, 256),
+    #     low_res_size=(128, 128),
+    #     channels=3,
+    #     diffusion_steps=4000,
+    # )
 
     logger.log("creating schedule sampler...")
     schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion)
