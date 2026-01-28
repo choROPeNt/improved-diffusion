@@ -476,6 +476,7 @@ class UNetModel(nn.Module):
         emb = self.time_embed(timestep_embedding(timesteps, self.model_channels))
 
         if self.num_classes is not None:
+            assert y is not None, "y must be provided for class-conditional model"
             assert y.shape == (x.shape[0],)
             emb = emb + self.label_emb(y)
 
@@ -506,7 +507,9 @@ class UNetModel(nn.Module):
         hs = []
         emb = self.time_embed(timestep_embedding(timesteps, self.model_channels))
         if self.num_classes is not None:
+            assert y is not None, "y must be provided for class-conditional model"
             assert y.shape == (x.shape[0],)
+
             emb = emb + self.label_emb(y)
         result = dict(down=[], up=[])
         h = x.type(self.inner_dtype)
@@ -580,7 +583,6 @@ class SuperResModel(UNetModel):
                 "SuperResModel requires `low_res` input, but got None. "
                 "Call model(x, t, low_res=...)"
             )
-
 
         upsampled = self._upsample_to_match(low_res, x)
         x = th.cat([x, upsampled], dim=1)
