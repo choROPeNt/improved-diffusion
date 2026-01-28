@@ -1,6 +1,8 @@
 from abc import abstractmethod
 
 import math
+from typing import List
+
 
 import numpy as np
 import torch as th
@@ -341,7 +343,8 @@ class UNetModel(nn.Module):
         )
 
         if self.num_classes is not None:
-            self.label_emb = nn.Embedding(num_classes, time_embed_dim)
+            assert isinstance(self.num_classes, int)
+            self.label_emb = nn.Embedding(self.num_classes, time_embed_dim)
 
         self.input_blocks = nn.ModuleList(
             [
@@ -353,6 +356,8 @@ class UNetModel(nn.Module):
         input_block_chans = [model_channels]
         ch = model_channels
         ds = 1
+        layers: list[nn.Module] = []
+
         for level, mult in enumerate(channel_mult):
             for _ in range(num_res_blocks):
                 layers = [
