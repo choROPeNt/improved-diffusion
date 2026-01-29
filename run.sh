@@ -2,12 +2,13 @@
 
 DATA_FLAGS="\
 --data_dir ./data \
---dir /data/horse/ws/dchristi-diffusion/checkpoints/test \
+--dir checkpoints/test \
 "
 
 MODEL_FLAGS="       \
 --in_channel 3      \
 --dims 2            \
+--spatial_size 256  \
 --num_channels 192  \
 --num_res_blocks 2  \
 --learn_sigma true  \
@@ -23,7 +24,7 @@ DIFFUSION_FLAGS="               \
 
 TRAIN_FLAGS="       \
 --lr 3e-4           \
---batch_size 4
+--batch_size 1
 "
 
 printf "DATA_FLAGS:\n%s\n" "$DATA_FLAGS"
