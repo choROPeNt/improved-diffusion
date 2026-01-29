@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-set -e
 
 DATA_FLAGS="\
---data_dir ./data\
+--data_dir ./data \
+--dir /data/horse/ws/dchristi-diffusion/checkpoints/test \
 "
 
 MODEL_FLAGS="       \
@@ -23,7 +23,7 @@ DIFFUSION_FLAGS="               \
 
 TRAIN_FLAGS="       \
 --lr 3e-4           \
---batch_size 64
+--batch_size 4
 "
 
 printf "DATA_FLAGS:\n%s\n" "$DATA_FLAGS"
