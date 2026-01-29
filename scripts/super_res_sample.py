@@ -2,7 +2,7 @@
 Generate a large batch of samples from a super resolution model, given a batch
 of samples from a regular model from image_sample.py.
 """
-
+from typing import Any, Dict
 import argparse
 import os
 
@@ -99,14 +99,14 @@ def load_data_for_worker(base_samples, batch_size, class_cond):
 
 
 def create_argparser():
-    defaults = dict(
-        clip_denoised = True,
-        num_samples = 10000,
-        batch_size = 16,
-        use_ddim = False,
-        base_samples = "",
-        model_path = "",
-        dir = None
+    defaults: Dict[str, Any] = dict(
+        clip_denoised=True,
+        num_samples=10000,
+        batch_size=16,
+        use_ddim=False,
+        base_samples="",
+        model_path="",
+        data_dir=None,  # rename from dir
     )
     defaults.update(sr_model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()

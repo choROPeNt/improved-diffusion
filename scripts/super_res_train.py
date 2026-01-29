@@ -5,7 +5,7 @@ Train a super-resolution model.
 from __future__ import annotations
 import sys
 
-from typing import Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple, Any, Dict
 
 import os
 
@@ -132,7 +132,7 @@ def _dist_status():
 
 
 def create_argparser():
-    defaults = dict(
+    defaults: Dict[str, Any] = dict(
         data_dir="",
         dir=None,
         schedule_sampler="uniform",
