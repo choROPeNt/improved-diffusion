@@ -15,7 +15,7 @@ def model_and_diffusion_defaults():
     return dict(
         in_channel=3,
         dims=2,
-        spatial_size=64,
+        spatial_size=256,
         num_channels=128,
         num_res_blocks=2,
         num_heads=4,
@@ -129,20 +129,26 @@ def create_model(
 
 def sr_model_and_diffusion_defaults():
     res = model_and_diffusion_defaults()
-    res["large_size"] = 256
-    res["small_size"] = 64
+    
+    # print(res.keys())
+    # res["large_size"] = 256
+    # res["small_size"] = 64
     arg_names = inspect.getfullargspec(sr_create_model_and_diffusion)[0]
     for k in res.copy().keys():
         if k not in arg_names:
             del res[k]
     return res
 
+def _quarter(x: int) -> int:
+    if x % 4 != 0:
+        raise ValueError(f"spatial_size must be divisible by 4 for SR, got {x}")
+    return x // 4
+
 
 def sr_create_model_and_diffusion(
     in_channel,
     dims,
-    large_size,
-    small_size,
+    spatial_size,
     class_cond,
     learn_sigma,
     num_channels,
@@ -161,6 +167,11 @@ def sr_create_model_and_diffusion(
     use_checkpoint,
     use_scale_shift_norm,
 ):
+    
+    # spatial_size is the ONLY size input
+    large_size = spatial_size
+    small_size = _quarter(spatial_size)
+
     model = sr_create_model(
         in_channel,
         dims,
