@@ -227,20 +227,66 @@ class TrainLoop:
                 loss.backward()
 
     def optimize_fp16(self):
-        if any(not torch.isfinite(p.grad).all() for p in self.model_params):
+        # 1) check for NaN/Inf grads, but skip params without grads
+        found_nonfinite = False
+        for p in self.model_params:
+            g = p.grad
+            if g is None:
+                continue
+            if not torch.isfinite(g).all():
+                found_nonfinite = True
+                break
+
+        if found_nonfinite:
             self.lg_loss_scale -= 1
-            logger.log(f"Found NaN, decreased lg_loss_scale to {self.lg_loss_scale}")
+            logger.log(f"Found NaN/Inf, decreased lg_loss_scale to {self.lg_loss_scale}")
+            # optionally: zero grads to avoid carrying bad values
+            self.opt.zero_grad(set_to_none=True)
             return
 
+        # 2) copy grads model -> master (this should handle None grads, but depends on your helper)
         model_grads_to_master_grads(self.model_params, self.master_params)
-        self.master_params[0].grad.mul_(1.0 / (2 ** self.lg_loss_scale))
-        self._log_grad_norm()
+
+        # 3) unscale grads on ALL master params that actually have grads
+        inv_scale = 1.0 / (2 ** self.lg_loss_scale)
+        for mp in self.master_params:
+            if mp.grad is None:
+                continue
+            mp.grad.mul_(inv_scale)
+
+        # 4) log + step
+        self._log_grad_norm()   # make sure this also skips None grads (as we fixed earlier)
         self._anneal_lr()
         self.opt.step()
+
+        # 5) EMA
         for rate, params in zip(self.ema_rate, self.ema_params):
             update_ema(params, self.master_params, rate=rate)
+
+        # 6) copy master -> model params
         master_params_to_model_params(self.model_params, self.master_params)
+
+        # 7) grow scale
         self.lg_loss_scale += self.fp16_scale_growth
+
+
+
+
+    # def optimize_fp16(self):
+    #     if any(not torch.isfinite(p.grad).all() for p in self.model_params):
+    #         self.lg_loss_scale -= 1
+    #         logger.log(f"Found NaN, decreased lg_loss_scale to {self.lg_loss_scale}")
+    #         return
+
+    #     model_grads_to_master_grads(self.model_params, self.master_params)
+    #     self.master_params[0].grad.mul_(1.0 / (2 ** self.lg_loss_scale))
+    #     self._log_grad_norm()
+    #     self._anneal_lr()
+    #     self.opt.step()
+    #     for rate, params in zip(self.ema_rate, self.ema_params):
+    #         update_ema(params, self.master_params, rate=rate)
+    #     master_params_to_model_params(self.model_params, self.master_params)
+    #     self.lg_loss_scale += self.fp16_scale_growth
 
     def optimize_normal(self):
         self._log_grad_norm()
