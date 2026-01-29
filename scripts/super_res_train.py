@@ -24,6 +24,7 @@ from improved_diffusion.script_util import (
     sr_create_model_and_diffusion,
     args_to_dict,
     add_dict_to_argparser,
+    _quarter
 )
 
 
@@ -64,11 +65,15 @@ def main():
     
 
     logger.log("creating data loader...")
+
+    large_size = args.spatial_size
+    small_size = _quarter(args.spatial_size)
+
     data = load_superres_data(
         args.data_dir,
         args.batch_size,
-        large_size=args.large_size,
-        small_size=args.small_size,
+        large_size=large_size,
+        small_size=small_size,
         class_cond=args.class_cond,
     )
 
@@ -106,7 +111,7 @@ def load_superres_data(data_dir, batch_size, large_size, small_size, class_cond=
     data = load_data(
         data_dir=data_dir,
         batch_size=batch_size,
-        image_size=large_size,
+        spatial_size=large_size,
         class_cond=class_cond,
     )
     for large_batch, model_kwargs in data:
