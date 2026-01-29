@@ -6,7 +6,11 @@ from torch.utils.data import DataLoader, Dataset
 
 
 def load_data(
-    *, data_dir, batch_size, image_size, class_cond=False, deterministic=False
+    *, data_dir, 
+    batch_size, 
+    spatial_size, 
+    class_cond=False, 
+    deterministic=False
 ):
     """
     For a dataset, create a generator over (images, kwargs) pairs.
@@ -18,7 +22,7 @@ def load_data(
 
     :param data_dir: a dataset directory.
     :param batch_size: the batch size of each returned pair.
-    :param image_size: the size to which images are resized.
+    :param spatial_size: the size to which images are resized.
     :param class_cond: if True, include a "y" key in returned dicts for class
                        label. If classes are not available and this is true, an
                        exception will be raised.
@@ -35,7 +39,7 @@ def load_data(
         sorted_classes = {x: i for i, x in enumerate(sorted(set(class_names)))}
         classes = [sorted_classes[x] for x in class_names]
     dataset = ImageDataset(
-        image_size,
+        spatial_size,
         all_files,
         classes=classes,
         shard=MPI.COMM_WORLD.Get_rank(),

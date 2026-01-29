@@ -15,7 +15,7 @@ def model_and_diffusion_defaults():
     return dict(
         in_channel=3,
         dims=2,
-        image_size=64,
+        spatial_size=64,
         num_channels=128,
         num_res_blocks=2,
         num_heads=4,
@@ -38,7 +38,7 @@ def model_and_diffusion_defaults():
 
 
 def create_model_and_diffusion(
-    image_size,
+    spatial_size,
     class_cond,
     learn_sigma,
     sigma_small,
@@ -59,7 +59,7 @@ def create_model_and_diffusion(
     use_scale_shift_norm,
 ):
     model = create_model(
-        image_size,
+        spatial_size,
         num_channels,
         num_res_blocks,
         learn_sigma=learn_sigma,
@@ -86,7 +86,7 @@ def create_model_and_diffusion(
 
 
 def create_model(
-    image_size,
+    spatial_size,
     num_channels,
     num_res_blocks,
     learn_sigma,
@@ -98,18 +98,18 @@ def create_model(
     use_scale_shift_norm,
     dropout,
 ):
-    if image_size == 256:
+    if spatial_size == 256:
         channel_mult = (1, 1, 2, 2, 4, 4)
-    elif image_size == 64:
+    elif spatial_size == 64:
         channel_mult = (1, 2, 3, 4)
-    elif image_size == 32:
+    elif spatial_size == 32:
         channel_mult = (1, 2, 2, 2)
     else:
-        raise ValueError(f"unsupported image size: {image_size}")
+        raise ValueError(f"unsupported image size: {spatial_size}")
 
     attention_ds = []
     for res in attention_resolutions.split(","):
-        attention_ds.append(image_size // int(res))
+        attention_ds.append(spatial_size // int(res))
 
     return UNetModel(
         in_channels=3,
