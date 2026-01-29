@@ -84,14 +84,14 @@ class ImageDataset(Dataset):
         # We are not on a new enough PIL to support the `reducing_gap`
         # argument, which uses BOX downsampling at powers of two first.
         # Thus, we do it by hand to improve downsample quality.
-        while min(*pil_image.size) >= 2 * self.resolution:
-            pil_image = pil_image.resize(
-                tuple(x // 2 for x in pil_image.size), resample=Image.BOX
-            )
+        w, h = pil_image.size
+        while min(w, h) >= 2 * self.resolution:
+            pil_image = pil_image.resize((w // 2, h // 2), resample=Image.Resampling.BOX)
+            w, h = pil_image.size
 
-        scale = self.resolution / min(*pil_image.size)
+        scale = self.resolution / min(w, h)
         pil_image = pil_image.resize(
-            tuple(round(x * scale) for x in pil_image.size), resample=Image.BICUBIC
+            (round(w * scale), round(h * scale)), resample=Image.Resampling.BICUBIC
         )
 
         arr = np.array(pil_image.convert("RGB"))
