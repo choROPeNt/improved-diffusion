@@ -2,7 +2,7 @@
 
 DATA_FLAGS="\
 --data_dir ./data \
---dir checkpoints/test \
+--dir /data/horse/ws/dchristi-diffusion/checkpoints/test \
 "
 
 MODEL_FLAGS="       \
