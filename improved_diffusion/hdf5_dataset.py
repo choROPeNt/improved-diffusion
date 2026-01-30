@@ -227,10 +227,11 @@ class MultiH5PatchDataset(Dataset):
         if self.add_channel:
             x = x[None, ...]                        # -> [1, D, H, W]
 
-        out: Dict[str, Any] = {
-            "start_wdh": np.array([w0, d0, h0], dtype=np.int64),
-            "file_idx": np.array(file_idx, dtype=np.int64),
-        }
+        # out: Dict[str, Any] = {
+        #     "start_wdh": np.array([w0, d0, h0], dtype=np.int64),
+        #     "file_idx": np.array(file_idx, dtype=np.int64),
+        # }
+        out: Dict[str, Any] = {}
         if self.classes is not None:
             out["y"] = np.array(self.classes[global_idx], dtype=np.int64)
 
