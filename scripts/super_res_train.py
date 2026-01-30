@@ -17,7 +17,7 @@ import torch.distributed as dist
 
 # from improved_diffusion import logger
 from improved_diffusion import dist_util, logger
-from improved_diffusion.image_datasets import load_data
+from improved_diffusion.datasets_util import load_data
 from improved_diffusion.resample import create_named_schedule_sampler
 from improved_diffusion.script_util import (
     sr_model_and_diffusion_defaults,
@@ -70,13 +70,15 @@ def main():
     small_size = _quarter(args.spatial_size)
 
     data = load_superres_data(
-        args.data_dir,
-        args.batch_size,
+        data_dir=args.data_dir,
+        file_list=args.file_list,
+        dataset_type=args.dataset_type,
+        batch_size=args.batch_size,
         large_size=large_size,
         small_size=small_size,
         class_cond=args.class_cond,
     )
-
+    # sys.exit()
     # for batch, cond in data:
     #     print(batch.shape)
     #     print(cond.keys())
@@ -107,16 +109,63 @@ def main():
     ).run_loop()
 
 
-def load_superres_data(data_dir, batch_size, large_size, small_size, class_cond=False):
+def load_superres_data(
+    *,
+    data_dir: str | None = None,
+    file_list: str | None = None,
+    dataset_type: str | None  = None,
+    batch_size: int,
+    large_size: int,
+    small_size: int,
+    class_cond: bool = False,
+    deterministic: bool = False,
+):
+    """
+    Yields (large_batch, model_kwargs) where model_kwargs contains:
+      - low_res: downsampled conditioning image
+      - optionally y: class labels if class_cond=True
+    """
+
     data = load_data(
         data_dir=data_dir,
+        file_list=file_list,
+        dataset_type=dataset_type,
         batch_size=batch_size,
         spatial_size=large_size,
         class_cond=class_cond,
+        deterministic=deterministic,
     )
+
     for large_batch, model_kwargs in data:
-        model_kwargs["low_res"] = F.interpolate(large_batch, small_size, mode="area")
+
+        # Expect: [N, C, H, W] (2D) or [N, C, D, H, W] (3D)
+        ndim = large_batch.ndim
+
+        if ndim == 4:
+            # 2D: NCHW
+            low_res = F.interpolate(
+                large_batch,
+                size=(small_size, small_size),
+                mode="area",
+            )
+
+        elif ndim == 5:
+            # 3D: NCDHW
+            low_res = F.interpolate(
+                large_batch,
+                size=(small_size, small_size, small_size),
+                mode="area",
+            )
+
+        else:
+            raise ValueError(
+                f"Unsupported input shape {large_batch.shape}. "
+                "Expected 4D (NCHW) or 5D (NCDHW)."
+            )
+
+        model_kwargs["low_res"] = low_res
         yield large_batch, model_kwargs
+
 
 def _dist_status():
     if dist.is_available() and dist.is_initialized():
@@ -138,7 +187,9 @@ def _dist_status():
 
 def create_argparser():
     defaults: Dict[str, Any] = dict(
-        data_dir="",
+        data_dir=None,       
+        file_list=None,
+        dataset_type=None, 
         dir=None,
         schedule_sampler="uniform",
         lr=1e-4,

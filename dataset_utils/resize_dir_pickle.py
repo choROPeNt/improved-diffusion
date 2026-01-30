@@ -3,7 +3,7 @@ from pathlib import Path
 from PIL import Image
 import numpy as np
 
-from improved_diffusion.image_datasets import _list_image_files_recursively
+from improved_diffusion.datasets_util import _list_image_files_recursively
 
 
 def main():
