@@ -50,6 +50,9 @@ class MultiH5PatchDataset(Dataset):
         shard: int = 0,
         num_shards: int = 1,
         cache_file_handles: bool = False,
+        normalize: bool | None = True,
+        clip_low: float | None = None,
+        clip_high: float | None = None,
     ):
         super().__init__()
 
@@ -68,6 +71,9 @@ class MultiH5PatchDataset(Dataset):
         self.shard = shard
         self.num_shards = num_shards
         self.cache_file_handles = cache_file_handles
+        self.normalize = normalize
+        self.clip_low = clip_low
+        self.clip_high = clip_high
 
         # Optional handle cache (per worker process) to speed repeated reads
         self._handles: Dict[int, h5py.File] = {}
@@ -198,15 +204,91 @@ class MultiH5PatchDataset(Dataset):
                 patch = vol[h0 : h0 + ph, d0 : d0 + pd, w0 : w0 + pw]
 
         x = np.asarray(patch, dtype=np.float32)     # [H, D, W] patch (h, d, w)
+        # normalize to [-1, 1]
+        if self.normalize:
+            if self.clip_low is not None and self.clip_high is not None:
+                lo = float(self.clip_low)
+                hi = float(self.clip_high)
+
+                # avoid divide-by-zero
+                if hi > lo:
+                    x = np.clip(x, lo, hi)
+                    x = 2.0 * (x - lo) / (hi - lo) - 1.0
+                else:
+                    x = np.zeros_like(x, dtype=np.float32)
+
+            else:
+                # fallback: full uint16 range
+                x = x / 32767.5 - 1.0
+
+            
         x = np.transpose(x, (1, 0, 2))              # -> [D, H, W]
+
         if self.add_channel:
             x = x[None, ...]                        # -> [1, D, H, W]
 
         out: Dict[str, Any] = {
-            # "start_wdh": np.array([w0, d0, h0], dtype=np.int64),
-            # "file_idx": np.array(file_idx, dtype=np.int64),
+            "start_wdh": np.array([w0, d0, h0], dtype=np.int64),
+            "file_idx": np.array(file_idx, dtype=np.int64),
         }
         if self.classes is not None:
             out["y"] = np.array(self.classes[global_idx], dtype=np.int64)
 
         return x, out
+    
+
+def estimate_u16_clip_bounds(
+    h5_paths,
+    dset_key: str,
+    spec: PatchSpec,
+    *,
+    n_patches_per_file: int = 64,
+    p_low: float = 1.0,
+    p_high: float = 99.0,
+    seed: int = 0,
+):
+    """
+    Returns (lo, hi) based on sampling patches across all files.
+    Uses percentiles over the sampled voxels.
+    """
+    rng = np.random.default_rng(seed)
+    pw, pd, ph = spec.patch_wdh
+
+    samples = []
+
+    for path in h5_paths:
+        path = str(path)
+        if not Path(path).is_file():
+            raise ValueError(f"Missing file: {path}")
+
+        with h5py.File(path, "r") as f:
+            vol = f[dset_key]
+            H, D, W = vol.shape  # (H, D, W)
+
+            # sample random patch starts
+            max_h = H - ph
+            max_d = D - pd
+            max_w = W - pw
+            if max_h < 0 or max_d < 0 or max_w < 0:
+                raise ValueError(f"Patch bigger than volume in {path}: vol={vol.shape}, patch={(ph,pd,pw)}")
+
+            for _ in range(n_patches_per_file):
+                h0 = int(rng.integers(0, max_h + 1))
+                d0 = int(rng.integers(0, max_d + 1))
+                w0 = int(rng.integers(0, max_w + 1))
+                patch = vol[h0:h0+ph, d0:d0+pd, w0:w0+pw]
+
+                # sample a subset of voxels from the patch to keep memory small
+                arr = np.asarray(patch, dtype=np.uint16).ravel()
+                if arr.size > 200_000:
+                    idx = rng.choice(arr.size, size=200_000, replace=False)
+                    arr = arr[idx]
+                samples.append(arr)
+
+    all_vals = np.concatenate(samples).astype(np.float32)
+    lo = float(np.percentile(all_vals, p_low))
+    hi = float(np.percentile(all_vals, p_high))
+
+    if hi <= lo:
+        raise ValueError(f"Degenerate bounds: lo={lo}, hi={hi}")
+    return lo, hi
