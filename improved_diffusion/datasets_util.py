@@ -8,7 +8,7 @@ from mpi4py import MPI
 import numpy as np
 from torch.utils.data import DataLoader, Dataset
 
-from improved_diffusion.hdf5_dataset import MultiH5PatchDataset, PatchSpec
+from improved_diffusion.hdf5_dataset import MultiH5PatchDataset, PatchSpec, estimate_u16_clip_bounds
 
 from pathlib import Path
 
@@ -105,6 +105,8 @@ def load_data(
             patch_wdh=(spatial_size,) * 3,
             stride_wdh=(spatial_size // 2,) * 3,
         )
+        lo, hi = estimate_u16_clip_bounds(h5_paths, "volume", spec, n_patches_per_file=64, p_low=1, p_high=99)
+
 
         dataset = MultiH5PatchDataset(
             h5_paths=h5_paths,
@@ -113,6 +115,9 @@ def load_data(
             shard=rank,
             num_shards=size,
             cache_file_handles=True,  # optional; set False if h5py gives trouble with workers
+            normalize=True,
+            clip_low = lo,
+            clip_high = hi,
         )
 
     # ---------------------------
