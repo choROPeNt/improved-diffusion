@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 
 DATA_FLAGS="\
---data_dir ./data \
---dir /data/horse/ws/dchristi-diffusion/checkpoints/test \
+--file_list ./data/file_list.txt \
+--dataset_type hdf5 \
+--dir checkpoints/test \
 "
-
+# --data_dir ./data/super_res_test/hr \
 MODEL_FLAGS="       \
---in_channel 3      \
---dims 2            \
+--in_channel 1      \
+--dims 3            \
 --spatial_size 256  \
 --num_channels 192  \
 --num_res_blocks 2  \
 --learn_sigma true  \
---class_cond true   \
+--class_cond false   \
 "
 
 DIFFUSION_FLAGS="               \
