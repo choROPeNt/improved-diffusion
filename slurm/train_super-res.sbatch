@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --time=12:00:00
 #SBATCH --nodes=1
-#SBATCH --ntasks=4
+#SBATCH --ntasks=1
 #SBATCH --cpus-per-task=6
 #SBATCH --partition=capella
-#SBATCH --mem-per-cpu=6G
-#SBATCH --gres=gpu:4
+#SBATCH --mem-per-cpu=12G
+#SBATCH --gres=gpu:1
 #SBATCH -J "Diff_super-res"
 #SBATCH --output=out/Diff_super-res-%j.out
 #SBATCH --mail-user=christian.duereth@tu-dresden.de
