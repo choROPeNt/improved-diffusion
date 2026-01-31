@@ -5,7 +5,7 @@ from typing import List
 
 
 import numpy as np
-import torch as th
+import torch 
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -200,7 +200,7 @@ class ResBlock(TimestepBlock):
             emb_out = emb_out[..., None]
         if self.use_scale_shift_norm:
             out_norm, out_rest = self.out_layers[0], self.out_layers[1:]
-            scale, shift = th.chunk(emb_out, 2, dim=1)
+            scale, shift = torch.chunk(emb_out, 2, dim=1)
             h = out_norm(h) * (1 + scale) + shift
             h = out_rest(h)
         else:
@@ -255,13 +255,13 @@ class QKVAttention(nn.Module):
         :return: an [N x C x T] tensor after attention.
         """
         ch = qkv.shape[1] // 3
-        q, k, v = th.split(qkv, ch, dim=1)
+        q, k, v = torch.split(qkv, ch, dim=1)
         scale = 1 / math.sqrt(math.sqrt(ch))
-        weight = th.einsum(
+        weight = torch.einsum(
             "bct,bcs->bts", q * scale, k * scale
         )  # More stable with f16 than dividing afterwards
-        weight = th.softmax(weight.float(), dim=-1).type(weight.dtype)
-        return th.einsum("bts,bcs->bct", weight, v)
+        weight = torch.softmax(weight.float(), dim=-1).type(weight.dtype)
+        return torch.einsum("bts,bcs->bct", weight, v)
 
     @staticmethod
     def count_flops(model, _x, y):
@@ -284,7 +284,7 @@ class QKVAttention(nn.Module):
         # The first computes the weight matrix, the second computes
         # the combination of the value vectors.
         matmul_ops = 2 * b * (num_spatial ** 2) * c
-        model.total_ops += th.DoubleTensor([matmul_ops])
+        model.total_ops += torch.DoubleTensor([matmul_ops])
 
 
 class UNetModel(nn.Module):
@@ -501,7 +501,7 @@ class UNetModel(nn.Module):
             hs.append(h)
         h = self.middle_block(h, emb)
         for module in self.output_blocks:
-            cat_in = th.cat([h, hs.pop()], dim=1)
+            cat_in = torch.cat([h, hs.pop()], dim=1)
             h = module(cat_in, emb)
         h = h.type(x.dtype)
         return self.out(h)
@@ -535,7 +535,7 @@ class UNetModel(nn.Module):
         h = self.middle_block(h, emb)
         result["middle"] = h.type(x.dtype)
         for module in self.output_blocks:
-            cat_in = th.cat([h, hs.pop()], dim=1)
+            cat_in = torch.cat([h, hs.pop()], dim=1)
             h = module(cat_in, emb)
             result["up"].append(h.type(x.dtype))
         return result
@@ -552,7 +552,7 @@ class SuperResModel(UNetModel):
         super().__init__(in_channels * 2, *args, **kwargs)
 
     @staticmethod
-    def _upsample_to_match(low_res: th.Tensor, x: th.Tensor) -> th.Tensor:
+    def _upsample_to_match(low_res: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         if low_res is None:
             raise ValueError("SuperResModelND requires low_res (got None).")
 
@@ -587,7 +587,7 @@ class SuperResModel(UNetModel):
             )
 
         upsampled = self._upsample_to_match(low_res, x)
-        x = th.cat([x, upsampled], dim=1)
+        x = torch.cat([x, upsampled], dim=1)
         return super().forward(x, timesteps, **kwargs)
 
     def get_feature_vectors(self, x, timesteps, low_res=None, **kwargs):
@@ -599,6 +599,6 @@ class SuperResModel(UNetModel):
             )
 
         upsampled = self._upsample_to_match(low_res, x)
-        x = th.cat([x, upsampled], dim=1)
+        x = torch.cat([x, upsampled], dim=1)
         return super().get_feature_vectors(x, timesteps, **kwargs)
 
