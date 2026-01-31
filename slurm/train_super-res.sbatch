@@ -4,7 +4,7 @@
 #SBATCH --ntasks=4
 #SBATCH --cpus-per-task=6
 #SBATCH --partition=capella
-#SBATCH --mem-per-cpu=12G
+#SBATCH --mem-per-cpu=6G
 #SBATCH --gres=gpu:4
 #SBATCH -J "Diff_super-res"
 #SBATCH --output=out/Diff_super-res-%j.out
