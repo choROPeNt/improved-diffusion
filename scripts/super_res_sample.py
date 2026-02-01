@@ -90,6 +90,7 @@ def main():
             model_kwargs=model_kwargs,
         )
 
+        print(sample.shape)
         sys.exit()
         sample = ((sample + 1) * 127.5).clamp(0, 255).to(torch.uint8)
         sample = sample.permute(0, 2, 3, 1)
