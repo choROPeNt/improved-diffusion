@@ -187,14 +187,15 @@ def load_data_for_worker_h5(
             path = files[int(idx)]
 
             with h5py.File(path, "r") as f:
+                
                 if dataset_key not in f:
                     raise KeyError(f"Missing dataset_key '{dataset_key}' in {path}")
-                arr = f[dataset_key][()]  # numpy array
+                arr = f[dataset_key][()]  # type: ignore # numpy array
 
                 # Optional label
                 if class_cond:
                     if label_key in f:
-                        y = f[label_key][()]
+                        y = f[label_key][()] # type: ignore
                     else:
                         # If you don't have labels, you can map from filename or coords here.
                         raise KeyError(f"class_cond=True but label_key '{label_key}' not found in {path}")
@@ -213,7 +214,7 @@ def load_data_for_worker_h5(
 
                 lo = float(np.percentile(x, 1.0))
                 hi = float(np.percentile(x, 99.0))
-                print(lo,hi)
+
                 x = np.clip(x, lo, hi)
                 x = 2.0 * (x - lo) / (hi - lo) - 1.0
 
