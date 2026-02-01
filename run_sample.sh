@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 RUN_ID="$(date +%Y-%m-%d_%H-%M)_$RANDOM"
-OUT_DIR="out/CT_Hys/${RUN_ID}"
+OUT_DIR="/data/horse/ws/dchristi-diffusion/results/CT_Hys/${RUN_ID}"
 mkdir -p "$OUT_DIR"
 
 # --- Use arrays to avoid quoting/whitespace bugs ---
@@ -22,7 +22,7 @@ MODEL_FLAGS=(
   --num_res_blocks 2
   --learn_sigma true
   --class_cond false
-  --model_path checkpoints/CT_Hys/20260131_120116_11752/model030000.pt
+  --model_path /data/horse/ws/dchristi-diffusion/checkpoints/CT_Hys/20260131_120116_11752/model030000.pt
 )
 
 DIFFUSION_FLAGS=(

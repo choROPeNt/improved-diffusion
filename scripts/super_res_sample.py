@@ -75,42 +75,88 @@ def main():
 
 
 
+    def is_dist() -> bool:
+        return dist.is_available() and dist.is_initialized()
+
+    def rank() -> int:
+        return dist.get_rank() if is_dist() else 0
+
+    def world() -> int:
+        return dist.get_world_size() if is_dist() else 1
+
     logger.log("creating samples...")
-    all_images = []
-    while len(all_images) * args.batch_size < args.num_samples:
-        model_kwargs = next(data)
-        model_kwargs = {k: v.to(dist_util.dev()) for k, v in model_kwargs.items()}
 
-        spatial = (args.spatial_size, ) * args.dims
+    all_images: list[np.ndarray] = []
+    n_done = 0
 
-        sample = diffusion.p_sample_loop(
+    spatial = (args.spatial_size,) * args.dims
+    device = dist_util.dev()
+
+    while n_done < args.num_samples:
+        batch = next(data)  # dict like {"low_res": tensor, ...}
+        batch = {k: v.to(device) for k, v in batch.items()}
+
+        x = diffusion.p_sample_loop(
             model,
             (args.batch_size, args.in_channel, *spatial),
             clip_denoised=args.clip_denoised,
-            model_kwargs=model_kwargs,
-        )
+            model_kwargs=batch,
+        ).contiguous()  # [B, C, ...] float in [-1,1] typically
 
-        print(sample.shape)
-        sys.exit()
-        sample = ((sample + 1) * 127.5).clamp(0, 255).to(torch.uint8)
-        sample = sample.permute(0, 2, 3, 1)
-        sample = sample.contiguous()
+        logger.log(f"sample batch: {tuple(x.shape)}")
 
-        all_samples = [torch.zeros_like(sample) for _ in range(dist.get_world_size())]
-        dist.all_gather(all_samples, sample)  # gather not supported with NCCL
-        for sample in all_samples:
-            all_images.append(sample.cpu().numpy())
-        logger.log(f"created {len(all_images) * args.batch_size} samples")
+        # Gather across ranks so rank0 can write a single file
+        if is_dist():
+            gathered = [torch.empty_like(x) for _ in range(world())]
+            dist.all_gather(gathered, x)
+        else:
+            gathered = [x]
 
-    arr = np.concatenate(all_images, axis=0)
-    arr = arr[: args.num_samples]
-    if dist.get_rank() == 0:
-        shape_str = "x".join([str(x) for x in arr.shape])
-        out_path = os.path.join(logger.get_dir(), f"samples_{shape_str}.npz")
-        logger.log(f"saving to {out_path}")
-        np.savez(out_path, arr)
+        # Move to CPU numpy
+        for x_r in gathered:
+            all_images.append(x_r.detach().cpu().numpy())
+            n_done += x_r.shape[0]
+            if n_done >= args.num_samples:
+                break
 
-    dist.barrier()
+        logger.log(f"created {n_done} / {args.num_samples} samples")
+
+    # Stack and trim
+    arr = np.concatenate(all_images, axis=0)[: args.num_samples]  # [N, C, ...]
+    shape_str = "x".join(map(str, arr.shape))
+
+    if rank() == 0:
+        out_dir = logger.get_dir()
+        os.makedirs(out_dir, exist_ok=True)
+
+        # Save HDF5 (recommended for volumes)
+        out_h5 = os.path.join(out_dir, f"samples_{shape_str}.h5")
+        logger.log(f"saving HDF5 to {out_h5}")
+        with h5py.File(out_h5, "w") as f:
+            dset = f.create_dataset(
+                "volume",
+                data=arr,
+                dtype="f4",
+                compression="gzip",
+                compression_opts=4,
+                chunks=(1,) + arr.shape[1:],  # chunk by sample
+            )
+            # helpful metadata
+            dset.attrs["range_hint"] = "typically in [-1,1] after diffusion"
+            f.attrs["num_samples"] = int(args.num_samples)
+            f.attrs["batch_size"] = int(args.batch_size)
+            f.attrs["in_channel"] = int(args.in_channel)
+            f.attrs["dims"] = int(args.dims)
+            f.attrs["spatial_size"] = int(args.spatial_size)
+
+        # Optional: also save NPZ if you want quick Python loading
+        # out_npz = os.path.join(out_dir, f"samples_{shape_str}.npz")
+        # logger.log(f"saving NPZ to {out_npz}")
+        # np.savez(out_npz, arr=arr)
+
+    if is_dist():
+        dist.barrier()
+
     logger.log("sampling complete")
 
 
