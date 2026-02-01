@@ -10,7 +10,7 @@
 #SBATCH --output=out/Diff_super-res-%j.out
 #SBATCH --mail-user=christian.duereth@tu-dresden.de
 #SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE,TIME_LIMIT,TIME_LIMIT_90
-#SBATCH -A p_biiax
+#SBATCH -A p_haftfaeden
 
 set -euo pipefail
 
