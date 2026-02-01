@@ -70,13 +70,14 @@ def main():
     small_size = _quarter(args.spatial_size)
 
     data = load_superres_data(
-        data_dir=args.data_dir,
-        file_list=args.file_list,
-        dataset_type=args.dataset_type,
-        batch_size=args.batch_size,
-        large_size=large_size,
-        small_size=small_size,
-        class_cond=args.class_cond,
+        data_dir        = args.data_dir,
+        file_list       = args.file_list,
+        dataset_type    = args.dataset_type,
+        dataset_key     = args.dataset_key,
+        batch_size      = args.batch_size,
+        large_size      = large_size,
+        small_size      = small_size,
+        class_cond      = args.class_cond,
     )
     # sys.exit()
     # for batch, cond in data:
@@ -114,6 +115,7 @@ def load_superres_data(
     data_dir: str | None = None,
     file_list: str | None = None,
     dataset_type: str | None  = None,
+    dataset_key: str | None = "volume",
     batch_size: int,
     large_size: int,
     small_size: int,
@@ -130,6 +132,7 @@ def load_superres_data(
         data_dir=data_dir,
         file_list=file_list,
         dataset_type=dataset_type,
+        dataset_key =dataset_key,
         batch_size=batch_size,
         spatial_size=large_size,
         class_cond=class_cond,
@@ -187,20 +190,28 @@ def _dist_status():
 
 def create_argparser():
     defaults: Dict[str, Any] = dict(
-        data_dir=None,       
+        # Data
+        data_dir=None,
         file_list=None,
-        dataset_type=None, 
+        dataset_type=None,
+        dataset_key="volume",
         dir=None,
+
+        # Training / optimization
         schedule_sampler="uniform",
         lr=1e-4,
         weight_decay=0.0,
         lr_anneal_steps=0,
         batch_size=1,
         microbatch=-1,
+
+        # EMA / logging
         ema_rate="0.9999",
         log_interval=10,
-        save_interval=10000,
+        save_interval=10_000,
         resume_checkpoint="",
+
+        # Mixed precision
         use_fp16=False,
         fp16_scale_growth=1e-3,
     )

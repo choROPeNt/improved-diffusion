@@ -23,6 +23,7 @@ def load_data(
     file_list: str | None = None,     # path to txt file
     dataset_file: str | None = None,  # for hdf5 etc (recommended)
     dataset_type: str | None = None,
+    dataset_key: str | None = "volume",
     batch_size: int,
     spatial_size: int,
     class_cond: bool = False,
@@ -105,12 +106,12 @@ def load_data(
             patch_wdh=(spatial_size,) * 3,
             stride_wdh=(spatial_size // 2,) * 3,
         )
-        lo, hi = estimate_u16_clip_bounds(h5_paths, "volume", spec, n_patches_per_file=64, p_low=1, p_high=99)
+        lo, hi = estimate_u16_clip_bounds(h5_paths, dataset_key, spec, n_patches_per_file=64, p_low=1, p_high=99)
 
 
         dataset = MultiH5PatchDataset(
             h5_paths=h5_paths,
-            dset_key="volume",
+            dset_key=dataset_key,
             spec=spec,
             shard=rank,
             num_shards=size,
