@@ -5,6 +5,7 @@ of samples from a regular model from image_sample.py.
 from typing import Any, Dict
 import argparse
 import os
+import sys
 
 import blobfile as bf
 import numpy as np
@@ -35,6 +36,8 @@ def main():
     )
     model.to(dist_util.dev())
     model.eval()
+
+    sys.exit()
 
     logger.log("loading data...")
     data = load_data_for_worker(args.base_samples, args.batch_size, args.class_cond)
@@ -106,7 +109,12 @@ def create_argparser():
         use_ddim=False,
         base_samples="",
         model_path="",
-        data_dir=None,  # rename from dir
+        # Data
+        data_dir=None,
+        file_list=None,
+        dataset_type=None,
+        dataset_key="volume",
+        dir=None,
     )
     defaults.update(sr_model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
