@@ -208,7 +208,7 @@ def create_argparser():
         # EMA / logging
         ema_rate="0.9999",
         log_interval=10,
-        save_interval=10_000,
+        save_interval=1000,
         resume_checkpoint="",
 
         # Mixed precision
@@ -240,7 +240,7 @@ def log_rank_gpu_mapping(logger, banner="Distributed setup"):
 
         msg = (
             f"[rank {rank}/{ws} | host {host}] "
-            f"CVD={cvd} | torch_device=cuda:{local_idx} | "
+            f"CUDA Visible Devices={cvd} | torch_device=cuda:{local_idx} | "
             f"gpu={props.name} | pci_bus_id={pci_str}"
         )
     else:
