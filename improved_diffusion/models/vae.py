@@ -213,7 +213,6 @@ class AbstractVAE(nn.Module):
         for i in range(len(chs)):
             enc += [ResBlock(dims, chs[i])]
             if ds in self.attn_ds:
-                print(i,ds)
                 enc += [AttentionBlockSDPA(chs[i], num_heads=attn_heads, use_checkpoint=use_checkpoint)]
             if i != len(chs) - 1:
                 enc += [Downsample(dims, chs[i], chs[i+1], mode="conv")]
