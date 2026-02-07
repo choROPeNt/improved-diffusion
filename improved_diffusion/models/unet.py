@@ -416,7 +416,7 @@ class UNetModel(nn.Module):
                 use_scale_shift_norm=use_scale_shift_norm,
             ),
         )
-
+        
         self.output_blocks = nn.ModuleList([])
         for level, mult in list(enumerate(channel_mult))[::-1]:
             for i in range(num_res_blocks + 1):
