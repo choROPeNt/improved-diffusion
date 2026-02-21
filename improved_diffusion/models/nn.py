@@ -31,6 +31,13 @@ def conv_nd(dims, *args, **kwargs):
         return nn.Conv3d(*args, **kwargs)
     raise ValueError(f"unsupported dimensions: {dims}")
 
+def conv_trans_nd(dims,  *args, **kwargs):
+    if dims == 2:
+        return nn.ConvTranspose2d( *args, **kwargs)
+    elif dims == 3:
+        return nn.ConvTranspose3d( *args, **kwargs)
+    raise ValueError(dims)
+
 
 def linear(*args, **kwargs):
     """
