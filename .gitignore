@@ -13,6 +13,13 @@ results/
 .vscode/
 out/
 scripts/archiv
+
+## symbolic links
+data
+results
+out
+.venv
+
 ## Labelbox ap key
 api_key.txt
 
