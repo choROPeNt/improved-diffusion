@@ -20,6 +20,7 @@ MODEL_FLAGS="       \
 --num_res_blocks 2  \
 --learn_sigma true  \
 --class_cond false  \
+--resume_checkpoint /data/horse/ws/dchristi-diffusion/checkpoints/CT_Hys/20260131_120116_11752/model030000.pt
 "
 
 DIFFUSION_FLAGS="               \
@@ -30,7 +31,7 @@ DIFFUSION_FLAGS="               \
 "
 
 TRAIN_FLAGS="       \
---lr 3e-4           \
+--lr 1e-4           \
 --batch_size 1
 "
 

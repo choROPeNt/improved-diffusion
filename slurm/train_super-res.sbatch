@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH --time=12:00:00
+#SBATCH --time=2:00:00
 #SBATCH --nodes=1
-#SBATCH --ntasks=1
+#SBATCH --ntasks=2
 #SBATCH --cpus-per-task=6
 #SBATCH --partition=capella
-#SBATCH --mem-per-cpu=12G
-#SBATCH --gres=gpu:1
+#SBATCH --mem-per-cpu=10G
+#SBATCH --gres=gpu:2
 #SBATCH -J "Diff_super-res"
 #SBATCH --output=out/Diff_super-res-%j.out
 #SBATCH --mail-user=christian.duereth@tu-dresden.de
@@ -23,7 +23,7 @@ echo "SLURM_NTASKS=${SLURM_NTASKS}"
 echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
 nvidia-smi
 
-RUN_ID="$(date +%Y%m%d_%H%M%S)_$RANDOM"
+RUN_ID="$(date +%Y-%m-%d_%H-%M)_$RANDOM"
 OUT_DIR="/data/horse/ws/dchristi-diffusion/checkpoints/CT_Hys/${RUN_ID}"
 mkdir -p "$OUT_DIR"
 
@@ -43,6 +43,7 @@ MODEL_FLAGS=(
   --learn_sigma true
   --class_cond false
   --use_fp16 true
+  # --resume_checkpoint /data/horse/ws/dchristi-diffusion/checkpoints/CT_Hys/20260131_120116_11752/model030000.pt
 )
 
 DIFFUSION_FLAGS=(
@@ -53,8 +54,8 @@ DIFFUSION_FLAGS=(
 )
 
 TRAIN_FLAGS=(
-  --lr 5e-5
-  --batch_size 1
+  --lr 1e-4
+  --batch_size 2
 )
 
 echo "OUT_DIR=$OUT_DIR"
