@@ -19,6 +19,7 @@ Example
 """
 
 import argparse
+import functools
 import json
 import os
 import time
@@ -78,12 +79,19 @@ class PatchDataset(Dataset):
         return binary, gray, phi, source
 
 
-def collate_downscale(batch):
-    """Stack binary patches, avg-pool 512->256, re-threshold to {-1, 1}."""
+def collate_downscale(batch, recon="mse"):
+    """Stack binary patches, avg-pool 512->256, re-threshold.
+
+    Target scaling matches the reconstruction loss:
+      mse -> {-1, +1}  (Gaussian likelihood on a tanh-style output)
+      bce -> { 0,  1}  (Bernoulli targets for binary_cross_entropy_with_logits)
+    """
     binary_list, gray_list, phi_list, _ = zip(*batch)
     x = torch.stack(binary_list)
     x = F.avg_pool2d(x, kernel_size=2, stride=2)
-    x = (x > 0.5).float() * 2.0 - 1.0
+    x = (x > 0.5).float()                       # {0, 1}
+    if recon == "mse":
+        x = x * 2.0 - 1.0                       # -> {-1, 1}
     phi = torch.stack(phi_list)
     return x, phi
 
@@ -125,27 +133,53 @@ def build_vae(args, device):
     ).to(device)
 
 
-def vae_loss(x_hat, x, mu, logvar, beta):
-    rec = F.mse_loss(x_hat, x, reduction="mean")
+def recon_term(out, x, recon):
+    """Reconstruction loss. `out` is logits (bce) or values in ~[-1,1] (mse)."""
+    if recon == "bce":
+        return F.binary_cross_entropy_with_logits(out, x, reduction="mean")
+    return F.mse_loss(out, x, reduction="mean")
+
+
+def vae_loss(x_hat, x, mu, logvar, beta, recon="mse"):
+    rec = recon_term(x_hat, x, recon)
     kl = -0.5 * torch.mean(1.0 + logvar - mu.pow(2) - logvar.exp())
     return rec + beta * kl, rec, kl
 
 
+def _binarize_target(x, recon):
+    # threshold at the midpoint of each scale: bce {0,1}->0.5, mse {-1,1}->0
+    return x > (0.5 if recon == "bce" else 0.0)
+
+
 @torch.no_grad()
-def eval_recon(model, loader, device):
-    """Mean reconstruction MSE over a loader, decoding the latent mean mu."""
+def eval_metrics(model, loader, device, recon):
+    """Held-out metrics, decoding the deterministic latent mean mu (no sampling
+    noise). Returns (recon_loss, iou, dice) — IoU/Dice on the thresholded
+    reconstruction are scale-independent, so they compare across mse/bce.
+    For both heads the prediction threshold is 0 (mse value>0; bce logit>0 <=>
+    sigmoid>0.5)."""
     was_training = model.training
     model.eval()
     total, n = 0.0, 0
+    inter = union = pred_sum = tgt_sum = 0
     for x, _phi in loader:
         x = x.to(device, non_blocking=True)
         mu, logvar = model.encode(x)
-        x_hat = model.decode(mu)
-        total += F.mse_loss(x_hat, x, reduction="mean").item() * x.shape[0]
+        out = model.decode(mu)
+        total += recon_term(out, x, recon).item() * x.shape[0]
         n += x.shape[0]
+        pred = out > 0.0
+        tgt = _binarize_target(x, recon)
+        i = (pred & tgt).sum().item()
+        inter += i
+        union += (pred | tgt).sum().item()
+        pred_sum += pred.sum().item()
+        tgt_sum += tgt.sum().item()
     if was_training:
         model.train()
-    return total / max(n, 1)
+    iou = inter / max(union, 1)
+    dice = (2 * inter) / max(pred_sum + tgt_sum, 1)
+    return total / max(n, 1), iou, dice
 
 
 def cycle(dl):
@@ -200,15 +234,18 @@ def main():
     )
 
     pin = device.type == "cuda"
+    collate = functools.partial(collate_downscale, recon=args.recon)
+    print(f"[recon] {args.recon}  (targets in "
+          f"{'{0,1}' if args.recon == 'bce' else '{-1,1}'})", flush=True)
     train_loader = DataLoader(
         train_sub, batch_size=args.batch_size, shuffle=True,
         num_workers=args.num_workers, pin_memory=pin, drop_last=True,
-        persistent_workers=args.num_workers > 0, collate_fn=collate_downscale,
+        persistent_workers=args.num_workers > 0, collate_fn=collate,
     )
     val_loader = DataLoader(
         val_sub, batch_size=args.batch_size, shuffle=False,
         num_workers=args.num_workers, pin_memory=pin, drop_last=False,
-        persistent_workers=args.num_workers > 0, collate_fn=collate_downscale,
+        persistent_workers=args.num_workers > 0, collate_fn=collate,
     )
 
     # ── model / optim ─────────────────────────────────────────────────────────
@@ -223,7 +260,8 @@ def main():
         return args.beta * min(1.0, step / args.beta_warmup_steps)
 
     history = {k: [] for k in
-               ("step", "loss", "recon", "val_recon", "kl", "beta", "sigma_mean")}
+               ("step", "loss", "recon", "val_recon", "val_iou", "val_dice",
+                "kl", "beta", "sigma_mean")}
     data_iter = cycle(train_loader)
 
     vae.train()
@@ -236,7 +274,7 @@ def main():
         opt.zero_grad(set_to_none=True)
         with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
             x_hat, mu, logvar, z = vae(x)
-            loss, rec, kl = vae_loss(x_hat, x, mu, logvar, beta)
+            loss, rec, kl = vae_loss(x_hat, x, mu, logvar, beta, recon=args.recon)
 
         if scaler.is_enabled():
             scaler.scale(loss).backward()
@@ -251,18 +289,21 @@ def main():
 
         if step % args.log_interval == 0:
             sigma_mean = logvar.mul(0.5).exp().mean().item()
-            val_rec = eval_recon(vae, val_loader, device)
+            val_rec, val_iou, val_dice = eval_metrics(vae, val_loader, device, args.recon)
             history["step"].append(step)
             history["loss"].append(loss.item())
             history["recon"].append(rec.item())
             history["val_recon"].append(val_rec)
+            history["val_iou"].append(val_iou)
+            history["val_dice"].append(val_dice)
             history["kl"].append(kl.item())
             history["beta"].append(beta)
             history["sigma_mean"].append(sigma_mean)
             ips = (step + 1) * args.batch_size / (time.time() - t0)
             print(
                 f"step {step:>6}/{args.total_steps}  loss={loss.item():.4f}  "
-                f"recon={rec.item():.4f}  val_recon={val_rec:.4f}  kl={kl.item():.3f}  "
+                f"recon={rec.item():.4f}  val_recon={val_rec:.4f}  "
+                f"val_IoU={val_iou:.3f}  val_Dice={val_dice:.3f}  kl={kl.item():.3f}  "
                 f"sig={sigma_mean:.3f}  beta={beta:.1e}  {ips:.0f} img/s",
                 flush=True,
             )
@@ -275,6 +316,7 @@ def main():
         json.dump(history, f)
     print(
         f"[done] final val_recon={history['val_recon'][-1]:.4f}  "
+        f"val_IoU={history['val_iou'][-1]:.3f}  val_Dice={history['val_dice'][-1]:.3f}  "
         f"sigma={history['sigma_mean'][-1]:.3f}  ({time.time()-t0:.0f}s)",
         flush=True,
     )
@@ -339,6 +381,9 @@ def parse_args():
     p.add_argument("--attn_ds", type=int, nargs="+", default=[4, 8])
     p.add_argument("--attn_heads", type=int, default=1)
     # objective
+    p.add_argument("--recon", choices=["mse", "bce"], default="mse",
+                   help="reconstruction loss; bce uses {0,1} targets + logits, "
+                        "mse uses {-1,1}")
     p.add_argument("--beta", type=float, default=5e-2, help="max KL weight")
     p.add_argument("--beta_warmup_steps", type=int, default=1000)
     # optim

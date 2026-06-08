@@ -17,6 +17,7 @@ model:
   attn_heads:      1
 
 objective:
+  recon:             mse    # mse ({-1,1} targets) | bce ({0,1} Bernoulli, crisper edges)
   beta:              0.05   # max KL weight
   beta_warmup_steps: 1000   # linear warmup of beta (in steps)
 
