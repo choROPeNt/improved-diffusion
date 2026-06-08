@@ -15,6 +15,7 @@ dependencies = [
     "tqdm",
     "numpy",
     "mpi4py",
+    "torchinfo",
 ]
 
 [tool.setuptools]
