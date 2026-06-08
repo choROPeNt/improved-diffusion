@@ -3,14 +3,20 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# personal stuff
+
+CLAUDE.md
+
+
 # Folders to omit
-checkpoints/
-data/
-slurm_out/
-predict/
-results/
+checkpoints
+data
+slurm_out
+predict
+results
+experiments
 .vscode/
-out/
+out
 scripts/archiv
 
 ## symbolic links
