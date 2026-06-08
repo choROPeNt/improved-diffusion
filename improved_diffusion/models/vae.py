@@ -141,74 +141,47 @@ class Upsample(nn.Module):
 
 class AbstractVAE(nn.Module):
     """
-    Abstract convolutional variational autoencoder (VAE) for 2D and 3D data.
+    Convolutional VAE for 2D/3D data.
 
-    This model implements a multi-scale encoder–decoder architecture with
-    residual blocks and optional self-attention at selected downsampling
-    levels. The encoder maps an input field to a global (vector-valued)
-    latent representation parameterized by (mu, logvar). The latent code
-    is reparameterized and broadcast back to a spatial feature map for
-    decoding.
+    Two latent modes (controlled by spatial_latent):
 
-    Key properties:
-    --------------
-    - Supports 2D and 3D inputs via dimensionality-agnostic convolutions.
-    - Hierarchical downsampling/upsampling with residual blocks.
-    - Optional self-attention at user-defined resolutions.
-    - Vector latent space with Gaussian prior.
-    - Suitable for compact representation learning and coarse generative
-    modeling of structured fields (e.g. binary fiber distributions).
+    spatial_latent=True  (recommended for reconstruction)
+        The bottleneck feature map is projected to latent_channels via 1×1
+        conv, preserving full spatial structure at the downsampled resolution.
+        Latent shape: [B, latent_channels, H/ds, W/ds].  Per-pixel KL.
 
-    Notes:
-    ------
-    This architecture uses a global (non-spatial) latent representation.
-    For latent diffusion or high-fidelity reconstruction, a spatial-latent
-    variant may be preferable.
-
-    Parameters:
-    -----------
-    in_channels : int
-        Number of input channels.
-    latent_dim : int
-        Dimensionality of the latent vector.
-    base_channels : int
-        Base number of feature channels.
-    channel_mult : tuple
-        Multipliers for channels at each resolution level.
-    dims : int
-        Spatial dimensionality (2 or 3).
-    out_channels : int, optional
-        Number of output channels (defaults to in_channels).
-    attn_ds : tuple
-        Downsampling factors at which attention blocks are inserted.
-    attn_heads : int
-        Number of attention heads.
-    use_checkpoint : bool
-        Whether to use gradient checkpointing.
+    spatial_latent=False  (global / legacy)
+        Global average pool → linear → latent vector of size latent_dim.
+        The decoder broadcasts the vector back to the spatial feature map.
+        Only encodes global statistics; cannot reconstruct fine spatial detail.
     """
 
     def __init__(
         self,
         in_channels: int,
-        latent_dim: int = 128,
+        latent_dim: int = 128,          # used when spatial_latent=False
+        latent_channels: int = 4,       # used when spatial_latent=True
         base_channels: int = 32,
         channel_mult=(1, 2, 4),
         dims: int = 2,
         out_channels: int | None = None,
-        attn_ds=(8,16,32),          # <--- where attention happens
-        attn_heads=1,               # keep head_dim reasonable
+        attn_ds=(8, 16, 32),
+        attn_heads=1,
         use_checkpoint=False,
+        spatial_latent: bool = False,
     ):
         super().__init__()
         self.dims = dims
         self.in_channels = in_channels
         self.out_channels = out_channels or in_channels
         self.latent_dim = latent_dim
+        self.latent_channels = latent_channels
+        self.spatial_latent = spatial_latent
         self.attn_ds = set(attn_ds)
 
         # --- Encoder ---
         chs = [base_channels * m for m in channel_mult]
-        enc = [conv_nd(dims, in_channels, chs[0], kernel_size = 3, stride = 1, padding = 1)]
+        enc = [conv_nd(dims, in_channels, chs[0], kernel_size=3, stride=1, padding=1)]
         ds = 1
         for i in range(len(chs)):
             enc += [ResBlock(dims, chs[i])]
@@ -217,54 +190,64 @@ class AbstractVAE(nn.Module):
             if i != len(chs) - 1:
                 enc += [Downsample(dims, chs[i], chs[i+1], mode="conv")]
                 ds *= 2
-
         self.encoder = nn.Sequential(*enc)
 
-        # global pooling to vector
-        self.to_mu = nn.Linear(chs[-1], latent_dim)
-        self.to_logvar = nn.Linear(chs[-1], latent_dim)
+        # --- Latent projections ---
+        if spatial_latent:
+            self.to_mu     = conv_nd(dims, chs[-1], latent_channels, 1)
+            self.to_logvar = conv_nd(dims, chs[-1], latent_channels, 1)
+            self.from_z    = conv_nd(dims, latent_channels, chs[-1], 1)
+        else:
+            self.to_mu     = nn.Linear(chs[-1], latent_dim)
+            self.to_logvar = nn.Linear(chs[-1], latent_dim)
+            self.from_z    = nn.Linear(latent_dim, chs[-1])
 
         # --- Decoder ---
-        self.from_z = nn.Linear(latent_dim, chs[-1])
-
         dec = []
-        ds_dec = ds 
+        ds_dec = ds
         for i in reversed(range(len(chs))):
             dec += [ResBlock(dims, chs[i])]
             if ds_dec in self.attn_ds:
                 dec += [AttentionBlockSDPA(chs[i], num_heads=attn_heads, use_checkpoint=use_checkpoint)]
             if i != 0:
-                dec += [Upsample(dims, chs[i], chs[i-1],mode="convtranspose")]  # upsample x2
+                dec += [Upsample(dims, chs[i], chs[i-1], mode="convtranspose")]
                 ds_dec //= 2
         dec += [normalization(chs[0]), nn.SiLU(), conv_nd(dims, chs[0], self.out_channels, 3, 1, 1)]
         self.decoder = nn.Sequential(*dec)
 
     def encode(self, x):
-        h = self.encoder(x)  # [B, C, *spatial']
-        # global average pool
-        if self.dims == 2:
-            h_vec = h.mean(dim=(2,3))        # [B, C]
+        h = self.encoder(x)
+        if self.spatial_latent:
+            mu     = self.to_mu(h)       # [B, latent_channels, *spatial']
+            logvar = self.to_logvar(h)
+            return mu, logvar
         else:
-            h_vec = h.mean(dim=(2,3,4))      # [B, C]
-        mu = self.to_mu(h_vec)
-        logvar = self.to_logvar(h_vec)
-        return mu, logvar, h.shape  # keep shape to broadcast
+            h_vec = h.mean(dim=tuple(range(2, 2 + self.dims)))  # global avg pool
+            mu     = self.to_mu(h_vec)
+            logvar = self.to_logvar(h_vec)
+            return mu, logvar, h.shape
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
 
-    def decode(self, z, enc_shape):
-        # broadcast vector back to feature map shape
-        b, c, *spatial = enc_shape
-        h = self.from_z(z).view(z.shape[0], c, *([1]*len(spatial)))
-        h = h.expand(z.shape[0], c, *spatial)
-        x_hat = self.decoder(h)
-        return x_hat
+    def decode(self, z, enc_shape=None):
+        if self.spatial_latent:
+            h = self.from_z(z)
+        else:
+            b, c, *spatial = enc_shape
+            h = self.from_z(z).view(z.shape[0], c, *([1] * len(spatial)))
+            h = h.expand(z.shape[0], c, *spatial)
+        return self.decoder(h)
 
     def forward(self, x):
-        mu, logvar, enc_shape = self.encode(x)
-        z = self.reparameterize(mu, logvar)
-        x_hat = self.decode(z, enc_shape)
+        if self.spatial_latent:
+            mu, logvar = self.encode(x)
+            z = self.reparameterize(mu, logvar)
+            x_hat = self.decode(z)
+        else:
+            mu, logvar, enc_shape = self.encode(x)
+            z = self.reparameterize(mu, logvar)
+            x_hat = self.decode(z, enc_shape)
         return x_hat, mu, logvar, z
