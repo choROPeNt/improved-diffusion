@@ -1,0 +1,35 @@
+# VAE training config — consumed by scripts/vae_train.py via --config.
+# CLI flags override anything set here (precedence: CLI > config > built-in).
+# Sections are cosmetic; keys are flattened to argparse argument names.
+
+data:
+  # data_path / out_dir are required — set them here or pass on the CLI.
+  data_path: /data/horse/ws/dchristi-diffusion/data/patches_vae.h5
+  out_dir:   /data/horse/ws/dchristi-diffusion/experiments/vae/lc8_b0.05
+  val_frac:  0.25          # held-out fraction
+  n_bins:    10            # phi strata for the stratified split
+
+model:
+  latent_channels: 8       # spatial latent z channels  ([B, lc, 32, 32])
+  base_channels:   32
+  channel_mult:    [1, 2, 4, 4]
+  attn_ds:         [4, 8]
+  attn_heads:      1
+
+objective:
+  beta:              0.05   # max KL weight
+  beta_warmup_steps: 1000   # linear warmup of beta (in steps)
+
+optim:
+  lr:           0.004       # ~sqrt-scaled from 1e-3 @ batch 4  ->  ~4e-3 @ batch 64
+  weight_decay: 1.0e-5
+  grad_clip:    1.0
+  batch_size:   64
+  total_steps:  30000
+
+runtime:
+  num_workers:   6
+  log_interval:  200
+  save_interval: 10000      # checkpoint every N steps (0 = only final)
+  no_amp:        false      # H100: leave false -> bf16 autocast
+  seed:          0
