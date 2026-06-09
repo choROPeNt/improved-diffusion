@@ -35,6 +35,7 @@ import torch.nn.functional as F
 from torch.amp.grad_scaler import GradScaler
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.tensorboard import SummaryWriter
 
 from improved_diffusion.models.vae import AbstractVAE
 
@@ -194,7 +195,8 @@ def eval_metrics(model, loader, device, recon):
 
 
 @torch.no_grad()
-def save_recon_samples(model, batch, device, recon, path_stem, n=8, save_png=True):
+def save_recon_samples(model, batch, device, recon, path_stem, n=8, save_png=True,
+                       writer=None, step=None):
     """Save reconstruction samples next to <path_stem>.
 
     Always writes <path_stem>.npz holding the *full* arrays at native
@@ -220,6 +222,15 @@ def save_recon_samples(model, batch, device, recon, path_stem, n=8, save_png=Tru
     orig_np = orig.float().cpu().numpy()             # [n, C, *spatial]
     rec_np = rec.float().cpu().numpy()
     np.savez_compressed(path_stem + ".npz", original=orig_np, reconstruction=rec_np)
+
+    if writer is not None and step is not None:
+        def to_tb(a):                                # [n, C, *spatial] -> [n, 1, H, W]
+            a = a[:, :1]
+            if a.ndim == 5:                          # 3D volume -> center slice
+                a = a[:, :, a.shape[2] // 2]
+            return torch.from_numpy(a)
+        writer.add_images("val/original", to_tb(orig_np), step)
+        writer.add_images("val/reconstruction", to_tb(rec_np), step)
 
     if not save_png:
         return
@@ -261,6 +272,10 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
     with open(os.path.join(args.out_dir, "config.json"), "w") as f:
         json.dump(vars(args), f, indent=2)
+
+    tb_dir = os.path.join(args.out_dir, "tb")
+    writer = SummaryWriter(log_dir=tb_dir)
+    print(f"[tensorboard] logging to {tb_dir}", flush=True)
 
     DEVICE = torch.device(
     "mps"  if torch.backends.mps.is_available()  else
@@ -382,10 +397,19 @@ def main():
                 f"sig={sigma_mean:.3f}  beta={beta:.1e}  {ips:.0f} img/s",
                 flush=True,
             )
+            writer.add_scalar("loss/total", loss.item(), step)
+            writer.add_scalar("loss/recon", rec.item(), step)
+            writer.add_scalar("loss/kl", kl.item(), step)
+            writer.add_scalar("val/recon", val_rec, step)
+            writer.add_scalar("val/IoU", val_iou, step)
+            writer.add_scalar("val/Dice", val_dice, step)
+            writer.add_scalar("train/sigma_mean", sigma_mean, step)
+            writer.add_scalar("train/beta", beta, step)
 
         if viz_batch is not None and step % args.sample_interval == 0:
             stem = os.path.join(sample_dir, f"recon_{step:06d}")
-            save_recon_samples(vae, viz_batch, DEVICE, args.recon, stem)
+            save_recon_samples(vae, viz_batch, DEVICE, args.recon, stem,
+                               writer=writer, step=step)
             print(f"[sample] saved {stem}.npz (+ .png)", flush=True)
 
         if args.save_interval > 0 and step > 0 and step % args.save_interval == 0:
@@ -394,6 +418,7 @@ def main():
     save_ckpt(vae, args, history, args.total_steps, n_params, final=True)
     with open(os.path.join(args.out_dir, "history.json"), "w") as f:
         json.dump(history, f)
+    writer.close()
     print(
         f"[done] final val_recon={history['val_recon'][-1]:.4f}  "
         f"val_IoU={history['val_iou'][-1]:.3f}  val_Dice={history['val_dice'][-1]:.3f}  "
