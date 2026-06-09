@@ -23,7 +23,7 @@ model:
 
 objective:
   recon:             bce    # mse ({-1,1} targets) | bce ({0,1} Bernoulli, crisper edges)
-  beta:              0.1   # max KL weight
+  beta:              0.5   # max KL weight
   beta_warmup_steps: 300   # linear warmup of beta (in steps)
 
 optim:
