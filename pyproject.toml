@@ -18,6 +18,8 @@ dependencies = [
     "torchinfo",
     "h5py",
     "pyyaml",
+    "omegaconf",
+    "matplotlib",
 ]
 
 [tool.setuptools]
