@@ -363,7 +363,7 @@ def load_config(path):
 def parse_args():
     # First resolve --config so it can supply argparse defaults.
     pre = argparse.ArgumentParser(add_help=False)
-    pre.add_argument("--config", default=None,
+    pre.add_argument("-c","--config", default=None,
                      help="YAML config (configs/vae_train.yaml); CLI overrides it")
     pre_args, _ = pre.parse_known_args()
     cfg = load_config(pre_args.config) if pre_args.config else {}
