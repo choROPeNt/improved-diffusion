@@ -24,14 +24,14 @@ model:
 objective:
   recon:             bce    # mse ({-1,1} targets) | bce ({0,1} Bernoulli, crisper edges)
   beta:              0.05   # max KL weight
-  beta_warmup_steps: 1000   # linear warmup of beta (in steps)
+  beta_warmup_steps: 300   # linear warmup of beta (in steps)
 
 optim:
   lr:           0.001       # ~sqrt-scaled from 1e-3 @ batch 4  ->  ~4e-3 @ batch 64
   weight_decay: 1.0e-5
   grad_clip:    1.0
   batch_size:   4
-  total_steps:  3000
+  total_steps:  1000
 
 runtime:
   num_workers:   6

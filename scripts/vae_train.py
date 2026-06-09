@@ -194,12 +194,17 @@ def eval_metrics(model, loader, device, recon):
 
 
 @torch.no_grad()
-def save_recon_grid(model, batch, device, recon, path, n=8):
-    """Save a top=original / bottom=reconstruction PNG grid.
+def save_recon_samples(model, batch, device, recon, path_stem, n=8, save_png=True):
+    """Save reconstruction samples next to <path_stem>.
+
+    Always writes <path_stem>.npz holding the *full* arrays at native
+    dimensionality (`original`, `reconstruction`, each [n, C, *spatial]) — the
+    3D-friendly export, since a PNG can only show one slice. When save_png is
+    True it also writes <path_stem>.png as a quick glance (2D images, or the
+    center slice along the first spatial axis for 3D volumes).
 
     Deterministic decode of the latent mean mu (no sampling noise). Outputs are
-    mapped to [0,1] for display: bce logits -> sigmoid; mse {-1,1} -> (x+1)/2.
-    For 3D volumes the center slice along the last spatial axis is shown.
+    mapped to [0,1]: bce logits -> sigmoid; mse {-1,1} -> (x+1)/2.
     """
     was_training = model.training
     model.eval()
@@ -212,13 +217,20 @@ def save_recon_grid(model, batch, device, recon, path, n=8):
     if was_training:
         model.train()
 
-    def to_img(t):                                   # [B,C,*spatial] -> [B,H,W]
-        t = t.float().cpu()[:, 0]                    # first channel
-        if t.dim() == 4:                             # 3D volume -> center slice
-            t = t[:, t.shape[1] // 2]
-        return t.numpy()
+    orig_np = orig.float().cpu().numpy()             # [n, C, *spatial]
+    rec_np = rec.float().cpu().numpy()
+    np.savez_compressed(path_stem + ".npz", original=orig_np, reconstruction=rec_np)
 
-    orig_i, rec_i = to_img(orig), to_img(rec)
+    if not save_png:
+        return
+
+    def to_img(a):                                   # [n,C,*spatial] -> [n,H,W]
+        a = a[:, 0]                                  # first channel
+        if a.ndim == 4:                              # 3D volume -> center slice
+            a = a[:, a.shape[1] // 2]
+        return a
+
+    orig_i, rec_i = to_img(orig_np), to_img(rec_np)
     m = orig_i.shape[0]
     fig, axes = plt.subplots(2, m, figsize=(1.5 * m, 3.2), squeeze=False)
     for j in range(m):
@@ -229,7 +241,7 @@ def save_recon_grid(model, batch, device, recon, path, n=8):
     axes[0, 0].set_title("original", loc="left", fontsize=9)
     axes[1, 0].set_title("reconstruction", loc="left", fontsize=9)
     fig.tight_layout()
-    fig.savefig(path, dpi=100, bbox_inches="tight")
+    fig.savefig(path_stem + ".png", dpi=100, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -372,9 +384,9 @@ def main():
             )
 
         if viz_batch is not None and step % args.sample_interval == 0:
-            grid_path = os.path.join(sample_dir, f"recon_{step:06d}.png")
-            save_recon_grid(vae, viz_batch, DEVICE, args.recon, grid_path)
-            print(f"[sample] saved {grid_path}", flush=True)
+            stem = os.path.join(sample_dir, f"recon_{step:06d}")
+            save_recon_samples(vae, viz_batch, DEVICE, args.recon, stem)
+            print(f"[sample] saved {stem}.npz (+ .png)", flush=True)
 
         if args.save_interval > 0 and step > 0 and step % args.save_interval == 0:
             save_ckpt(vae, args, history, step, n_params, final=False)
