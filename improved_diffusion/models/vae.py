@@ -190,6 +190,12 @@ class AbstractVAE(nn.Module):
             if i != len(chs) - 1:
                 enc += [Downsample(dims, chs[i], chs[i+1], mode="conv")]
                 ds *= 2
+        # mid-block at the bottleneck resolution: ResBlock -> Attention -> ResBlock
+        enc += [
+            ResBlock(dims, chs[-1]),
+            AttentionBlockSDPA(chs[-1], num_heads=attn_heads, use_checkpoint=use_checkpoint),
+            ResBlock(dims, chs[-1]),
+        ]
         self.encoder = nn.Sequential(*enc)
 
         # --- Latent projections ---
@@ -203,7 +209,12 @@ class AbstractVAE(nn.Module):
             self.from_z    = nn.Linear(latent_dim, chs[-1])
 
         # --- Decoder ---
-        dec = []
+        # mirrored mid-block at the bottleneck resolution: ResBlock -> Attention -> ResBlock
+        dec = [
+            ResBlock(dims, chs[-1]),
+            AttentionBlockSDPA(chs[-1], num_heads=attn_heads, use_checkpoint=use_checkpoint),
+            ResBlock(dims, chs[-1]),
+        ]
         ds_dec = ds
         for i in reversed(range(len(chs))):
             dec += [ResBlock(dims, chs[i])]
