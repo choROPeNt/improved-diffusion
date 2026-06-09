@@ -10,11 +10,17 @@ data:
   n_bins:    10            # phi strata for the stratified split
 
 model:
-  latent_channels: 8       # spatial latent z channels  ([B, lc, 32, 32])
-  base_channels:   32
-  channel_mult:    [1, 2, 4, 4]
-  attn_ds:         [4, 8]
-  attn_heads:      1
+  # NOTE: build_vae() in scripts/vae_train.py only consumes the keys below that are NOT
+  # marked "(hardcoded ...)". It currently hardcodes in_channels=1, dims=2, spatial_latent=True.
+  in_channels:      1            # (hardcoded to 1 in build_vae) input volume channels
+  dims:             3            # (hardcoded to 2 in build_vae!) this value is IGNORED — model is built as 2D
+  latent_channels:  8            # z channels in spatial latent mode; latent is [B, latent_channels, *spatial/ds]
+  base_channels:    32           # channels at the highest resolution (stage 0)
+  channel_mult:     [1, 2, 4, 4] # per-stage channel multiplier; len = #stages, #downsamples = len-1 (here ds up to 8x)
+  attn_ds:          [4, 8]       # downsample factors at which to insert self-attention (e.g. 8 -> the /8 stage)
+  attn_heads:       1            # attention heads per AttentionBlockSDPA
+
+
 
 objective:
   recon:             mse    # mse ({-1,1} targets) | bce ({0,1} Bernoulli, crisper edges)
