@@ -23,11 +23,13 @@ import functools
 import json
 import os
 import time
+from typing import cast
 
 import h5py
 import numpy as np
 import torch
 import torch.nn.functional as F
+from torch.amp.grad_scaler import GradScaler
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, Dataset, Subset
 
@@ -46,10 +48,10 @@ class PatchDataset(Dataset):
         self._file = None  # opened lazily per worker
 
         with h5py.File(self.h5_path, "r") as f:
-            self.class_names = json.loads(f.attrs["class_names"])
-            self.source_files = json.loads(f.attrs["source_files"])
-            class_ids = f["class_id"][:]
-            sources = f["source"][:].astype(str)
+            self.class_names = json.loads(cast(str, f.attrs["class_names"]))
+            self.source_files = json.loads(cast(str, f.attrs["source_files"]))
+            class_ids = np.asarray(f["class_id"])
+            sources = np.asarray(f["source"]).astype(str)
 
         mask = np.ones(len(class_ids), dtype=bool)
         if class_filter is not None:
@@ -67,10 +69,11 @@ class PatchDataset(Dataset):
             self._file = h5py.File(self.h5_path, "r")
         idx = int(self._indices[i])
 
-        binary = torch.from_numpy(self._file["patches"][idx].astype(np.float32)).unsqueeze(0)
-        gray = torch.from_numpy(self._file["images"][idx].astype(np.float32) / 255.0).unsqueeze(0)
-        phi = torch.tensor(float(self._file["phi"][idx]))
-        s = self._file["source"][idx]
+        f = cast(h5py.File, self._file)
+        binary = torch.from_numpy(cast(h5py.Dataset, f["patches"])[idx].astype(np.float32)).unsqueeze(0)
+        gray = torch.from_numpy(cast(h5py.Dataset, f["images"])[idx].astype(np.float32) / 255.0).unsqueeze(0)
+        phi = torch.tensor(float(cast(h5py.Dataset, f["phi"])[idx]))
+        s = cast(h5py.Dataset, f["source"])[idx]
         source = s.decode() if isinstance(s, bytes) else str(s)
 
         if self.transform is not None:
@@ -99,7 +102,7 @@ def collate_downscale(batch, recon="mse"):
 def stratified_split(ds, data_path, val_frac, n_bins, seed):
     """Disjoint train/val indices stratified by phi quantile bins."""
     with h5py.File(data_path, "r") as f:
-        phi_all = f["phi"][:][ds._indices].astype(np.float64)
+        phi_all = np.asarray(f["phi"])[ds._indices].astype(np.float64)
 
     edges = np.quantile(phi_all, np.linspace(0, 1, n_bins + 1))
     bin_id = np.clip(np.digitize(phi_all, edges[1:-1]), 0, n_bins - 1)
@@ -122,14 +125,14 @@ def stratified_split(ds, data_path, val_frac, n_bins, seed):
 # ─────────────────────────────────────────────────────────────────────────────
 def build_vae(args, device):
     return AbstractVAE(
-        in_channels=1,
+        in_channels=args.in_channels if hasattr(args, "in_channels") else 1,
         latent_channels=args.latent_channels,
         base_channels=args.base_channels,
         channel_mult=tuple(args.channel_mult),
-        dims=2,
+        dims=args.dims if hasattr(args, "dims") else 2,
         attn_ds=tuple(args.attn_ds),
         attn_heads=args.attn_heads,
-        spatial_latent=True,
+        spatial_latent=args.spatial_latent if hasattr(args, "spatial_latent") else True,
     ).to(device)
 
 
@@ -209,7 +212,7 @@ def main():
     amp_dtype = (
         torch.bfloat16 if (use_amp and torch.cuda.is_bf16_supported()) else torch.float16
     )
-    scaler = torch.amp.GradScaler(
+    scaler = GradScaler(
         device.type, enabled=use_amp and amp_dtype == torch.float16
     )
     if use_amp:
@@ -262,6 +265,7 @@ def main():
     history = {k: [] for k in
                ("step", "loss", "recon", "val_recon", "val_iou", "val_dice",
                 "kl", "beta", "sigma_mean")}
+    
     data_iter = cycle(train_loader)
 
     vae.train()
