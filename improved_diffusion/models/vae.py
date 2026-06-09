@@ -169,14 +169,17 @@ class AbstractVAE(nn.Module):
         attn_heads=1,
         use_checkpoint=False,
         spatial_latent: bool = False,
+        out_activation: str = "identity",   # eval-only output map: identity | sigmoid | softmax
     ):
         super().__init__()
+        assert out_activation in ("identity", "sigmoid", "softmax"), out_activation
         self.dims = dims
         self.in_channels = in_channels
         self.out_channels = out_channels or in_channels
         self.latent_dim = latent_dim
         self.latent_channels = latent_channels
         self.spatial_latent = spatial_latent
+        self.out_activation = out_activation
         self.attn_ds = set(attn_ds)
 
         # --- Encoder ---
@@ -227,11 +230,14 @@ class AbstractVAE(nn.Module):
         self.decoder = nn.Sequential(*dec)
 
     def encode(self, x):
+        """Returns (mu, logvar, enc_shape). enc_shape is None in spatial mode and
+        the encoder feature-map shape in global mode (needed by decode to
+        broadcast the latent vector back over space)."""
         h = self.encoder(x)
         if self.spatial_latent:
             mu     = self.to_mu(h)       # [B, latent_channels, *spatial']
             logvar = self.to_logvar(h)
-            return mu, logvar
+            return mu, logvar, None
         else:
             h_vec = h.mean(dim=tuple(range(2, 2 + self.dims)))  # global avg pool
             mu     = self.to_mu(h_vec)
@@ -247,18 +253,27 @@ class AbstractVAE(nn.Module):
         if self.spatial_latent:
             h = self.from_z(z)
         else:
+            assert enc_shape is not None, "enc_shape is required when spatial_latent=False"
             b, c, *spatial = enc_shape
             h = self.from_z(z).view(z.shape[0], c, *([1] * len(spatial)))
             h = h.expand(z.shape[0], c, *spatial)
         return self.decoder(h)
 
+    def _final_act(self, x):
+        if self.out_activation == "sigmoid":
+            return torch.sigmoid(x)              # per-channel independent Bernoulli
+        if self.out_activation == "softmax":
+            return torch.softmax(x, dim=1)       # mutually-exclusive classes over channels
+        return x
+
     def forward(self, x):
-        if self.spatial_latent:
-            mu, logvar = self.encode(x)
-            z = self.reparameterize(mu, logvar)
-            x_hat = self.decode(z)
-        else:
-            mu, logvar, enc_shape = self.encode(x)
-            z = self.reparameterize(mu, logvar)
-            x_hat = self.decode(z, enc_shape)
+        mu, logvar, enc_shape = self.encode(x)
+        z = self.reparameterize(mu, logvar)
+        x_hat = self.decode(z, enc_shape)
+        # Training: return raw logits — the loss applies the activation
+        # (e.g. binary_cross_entropy_with_logits). Eval: return probabilities /
+        # bounded output. decode() always stays raw, so eval_metrics' logit>0
+        # thresholding is unaffected.
+        if not self.training:
+            x_hat = self._final_act(x_hat)
         return x_hat, mu, logvar, z
