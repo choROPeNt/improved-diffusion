@@ -5,15 +5,14 @@
 data:
   # data_path / out_dir are required — set them here or pass on the CLI.
   data_path: data/patches_vae.h5
-  out_dir:   experiments/vae/lc8_b0.05
+  out_dir:   experiments/vae/lc${model.latent_channels}_b${objective.beta}
   val_frac:  0.25          # held-out fraction
   n_bins:    10            # phi strata for the stratified split
 
 model:
-  # NOTE: build_vae() in scripts/vae_train.py only consumes the keys below that are NOT
-  # marked "(hardcoded ...)". It currently hardcodes in_channels=1, dims=2, spatial_latent=True.
-  in_channels:      1            # (hardcoded to 1 in build_vae) input volume channels
-  dims:             3            # (hardcoded to 2 in build_vae!) this value is IGNORED — model is built as 2D
+  in_channels:      1            # input volume channels (1 = single-modality)
+  dims:             2            # spatial rank: 2 -> Conv2d, 3 -> Conv3d
+  spatial_latent:   true         # project bottleneck -> latent_channels via 1x1 conv (per-pixel KL); false = global pooled vector
   latent_channels:  8            # z channels in spatial latent mode; latent is [B, latent_channels, *spatial/ds]
   base_channels:    32           # channels at the highest resolution (stage 0)
   channel_mult:     [1, 2, 4, 4] # per-stage channel multiplier; len = #stages, #downsamples = len-1 (here ds up to 8x)
@@ -23,7 +22,7 @@ model:
 
 
 objective:
-  recon:             mse    # mse ({-1,1} targets) | bce ({0,1} Bernoulli, crisper edges)
+  recon:             bce    # mse ({-1,1} targets) | bce ({0,1} Bernoulli, crisper edges)
   beta:              0.05   # max KL weight
   beta_warmup_steps: 1000   # linear warmup of beta (in steps)
 
@@ -31,12 +30,13 @@ optim:
   lr:           0.001       # ~sqrt-scaled from 1e-3 @ batch 4  ->  ~4e-3 @ batch 64
   weight_decay: 1.0e-5
   grad_clip:    1.0
-  batch_size:   64
-  total_steps:  30000
+  batch_size:   4
+  total_steps:  3000
 
 runtime:
   num_workers:   6
-  log_interval:  50
-  save_interval: 10000      # checkpoint every N steps (0 = only final)
+  log_interval:  10
+  save_interval: 0      # checkpoint every N steps (0 = only final)
+  sample_interval: 10     # save orig/recon PNG grid to <out_dir>/samples every N steps (0 = off)
   no_amp:        false      # H100: leave false -> bf16 autocast
-  seed:          0
+  seed:          67
