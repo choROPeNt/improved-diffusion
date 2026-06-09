@@ -9,13 +9,13 @@ Held-out reconstruction (val_recon) is the metric to compare across runs; the
 train/val split is stratified by phi (fiber volume fraction) so both shares the
 same distribution.
 
+All settings come from the YAML config (-c/--config); there are no per-setting
+CLI flags. To sweep, write one config per run (or template + edit) and point
+--config at it.
+
 Example
 -------
-    python scripts/vae_train.py \
-        --data_path /data/.../patches_vae.h5 \
-        --out_dir   /data/.../experiments/vae/lc8_b0.05 \
-        --latent_channels 8 --beta 5e-2 \
-        --total_steps 30000 --batch_size 64 --lr 2e-3
+    python scripts/vae_train.py --config configs/vae_train.yaml
 """
 
 import argparse
@@ -26,6 +26,9 @@ import time
 from typing import cast
 
 import h5py
+import matplotlib
+matplotlib.use("Agg")          # headless: write PNGs, no display (HPC-safe)
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -133,6 +136,8 @@ def build_vae(args, device):
         attn_ds=tuple(args.attn_ds),
         attn_heads=args.attn_heads,
         spatial_latent=args.spatial_latent if hasattr(args, "spatial_latent") else True,
+        # eval-only output map: bce decodes logits -> sigmoid probs; mse stays raw
+        out_activation="sigmoid" if args.recon == "bce" else "identity",
     ).to(device)
 
 
@@ -160,14 +165,17 @@ def eval_metrics(model, loader, device, recon):
     noise). Returns (recon_loss, iou, dice) — IoU/Dice on the thresholded
     reconstruction are scale-independent, so they compare across mse/bce.
     For both heads the prediction threshold is 0 (mse value>0; bce logit>0 <=>
-    sigmoid>0.5)."""
+    sigmoid>0.5).
+
+    NOTE: binary only. A softmax/multi-class head (out_activation="softmax") would
+    need cross_entropy in recon_term, pred=out.argmax(1), and per-class IoU/Dice."""
     was_training = model.training
     model.eval()
     total, n = 0.0, 0
     inter = union = pred_sum = tgt_sum = 0
     for x, _phi in loader:
         x = x.to(device, non_blocking=True)
-        mu, logvar = model.encode(x)
+        mu, logvar, _ = model.encode(x)
         out = model.decode(mu)
         total += recon_term(out, x, recon).item() * x.shape[0]
         n += x.shape[0]
@@ -183,6 +191,46 @@ def eval_metrics(model, loader, device, recon):
     iou = inter / max(union, 1)
     dice = (2 * inter) / max(pred_sum + tgt_sum, 1)
     return total / max(n, 1), iou, dice
+
+
+@torch.no_grad()
+def save_recon_grid(model, batch, device, recon, path, n=8):
+    """Save a top=original / bottom=reconstruction PNG grid.
+
+    Deterministic decode of the latent mean mu (no sampling noise). Outputs are
+    mapped to [0,1] for display: bce logits -> sigmoid; mse {-1,1} -> (x+1)/2.
+    For 3D volumes the center slice along the last spatial axis is shown.
+    """
+    was_training = model.training
+    model.eval()
+    x = batch.to(device)[:n]
+    out = model.decode(model.encode(x)[0])          # raw logits / values
+    if recon == "bce":
+        orig, rec = x, torch.sigmoid(out)
+    else:                                            # mse, targets in {-1,1}
+        orig, rec = (x + 1) / 2, (out.clamp(-1, 1) + 1) / 2
+    if was_training:
+        model.train()
+
+    def to_img(t):                                   # [B,C,*spatial] -> [B,H,W]
+        t = t.float().cpu()[:, 0]                    # first channel
+        if t.dim() == 4:                             # 3D volume -> center slice
+            t = t[:, t.shape[1] // 2]
+        return t.numpy()
+
+    orig_i, rec_i = to_img(orig), to_img(rec)
+    m = orig_i.shape[0]
+    fig, axes = plt.subplots(2, m, figsize=(1.5 * m, 3.2), squeeze=False)
+    for j in range(m):
+        axes[0, j].imshow(orig_i[j], cmap="gray", vmin=0, vmax=1)
+        axes[1, j].imshow(rec_i[j], cmap="gray", vmin=0, vmax=1)
+        axes[0, j].axis("off")
+        axes[1, j].axis("off")
+    axes[0, 0].set_title("original", loc="left", fontsize=9)
+    axes[1, 0].set_title("reconstruction", loc="left", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(path, dpi=100, bbox_inches="tight")
+    plt.close(fig)
 
 
 def cycle(dl):
@@ -202,18 +250,22 @@ def main():
     with open(os.path.join(args.out_dir, "config.json"), "w") as f:
         json.dump(vars(args), f, indent=2)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"[device] {device}", flush=True)
-    if device.type == "cuda":
+    DEVICE = torch.device(
+    "mps"  if torch.backends.mps.is_available()  else
+    "cuda" if torch.cuda.is_available()           else
+    "cpu"
+    )
+    print(f"[device] {DEVICE}", flush=True)
+    if DEVICE.type == "cuda":
         print(f"[gpu] {torch.cuda.get_device_name(0)}", flush=True)
 
     # ── AMP: bf16 on H100 (no scaler), fp16 elsewhere on cuda, off on cpu ────
-    use_amp = device.type == "cuda" and not args.no_amp
+    use_amp = DEVICE.type == "cuda" and not args.no_amp
     amp_dtype = (
         torch.bfloat16 if (use_amp and torch.cuda.is_bf16_supported()) else torch.float16
     )
     scaler = GradScaler(
-        device.type, enabled=use_amp and amp_dtype == torch.float16
+        DEVICE.type, enabled=use_amp and amp_dtype == torch.float16
     )
     if use_amp:
         print(f"[amp] enabled, dtype={amp_dtype}", flush=True)
@@ -236,7 +288,7 @@ def main():
         flush=True,
     )
 
-    pin = device.type == "cuda"
+    pin = DEVICE.type == "cuda"
     collate = functools.partial(collate_downscale, recon=args.recon)
     print(f"[recon] {args.recon}  (targets in "
           f"{'{0,1}' if args.recon == 'bce' else '{-1,1}'})", flush=True)
@@ -251,8 +303,15 @@ def main():
         persistent_workers=args.num_workers > 0, collate_fn=collate,
     )
 
+    # fixed val batch for reproducible reconstruction snapshots across steps
+    sample_dir = os.path.join(args.out_dir, "samples")
+    viz_batch = None
+    if args.sample_interval > 0:
+        os.makedirs(sample_dir, exist_ok=True)
+        viz_batch = next(iter(val_loader))[0]
+
     # ── model / optim ─────────────────────────────────────────────────────────
-    vae = build_vae(args, device)
+    vae = build_vae(args, DEVICE)
     n_params = sum(p.numel() for p in vae.parameters())
     print(f"[model] latent_channels={args.latent_channels} params={n_params:,}", flush=True)
     opt = AdamW(vae.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -272,11 +331,11 @@ def main():
     t0 = time.time()
     for step in range(args.total_steps + 1):
         x, _phi = next(data_iter)
-        x = x.to(device, non_blocking=True)
+        x = x.to(DEVICE, non_blocking=True)
         beta = beta_at(step)
 
         opt.zero_grad(set_to_none=True)
-        with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+        with torch.autocast(device_type=DEVICE.type, dtype=amp_dtype, enabled=use_amp):
             x_hat, mu, logvar, z = vae(x)
             loss, rec, kl = vae_loss(x_hat, x, mu, logvar, beta, recon=args.recon)
 
@@ -293,7 +352,7 @@ def main():
 
         if step % args.log_interval == 0:
             sigma_mean = logvar.mul(0.5).exp().mean().item()
-            val_rec, val_iou, val_dice = eval_metrics(vae, val_loader, device, args.recon)
+            val_rec, val_iou, val_dice = eval_metrics(vae, val_loader, DEVICE, args.recon)
             history["step"].append(step)
             history["loss"].append(loss.item())
             history["recon"].append(rec.item())
@@ -311,6 +370,11 @@ def main():
                 f"sig={sigma_mean:.3f}  beta={beta:.1e}  {ips:.0f} img/s",
                 flush=True,
             )
+
+        if viz_batch is not None and step % args.sample_interval == 0:
+            grid_path = os.path.join(sample_dir, f"recon_{step:06d}.png")
+            save_recon_grid(vae, viz_batch, DEVICE, args.recon, grid_path)
+            print(f"[sample] saved {grid_path}", flush=True)
 
         if args.save_interval > 0 and step > 0 and step % args.save_interval == 0:
             save_ckpt(vae, args, history, step, n_params, final=False)
@@ -345,12 +409,19 @@ def save_ckpt(vae, args, history, step, n_params, final):
 
 
 def load_config(path):
-    """Read a YAML config and flatten its (cosmetic) sections into a single
-    dict of argparse argument names -> values."""
-    import yaml
+    """Read a YAML config, resolve ${section.key} interpolations (OmegaConf), and
+    flatten its (cosmetic) sections into a single dict of argparse names -> values.
 
-    with open(path) as f:
-        raw = yaml.safe_load(f) or {}
+    Interpolations resolve against the *nested* config (e.g. an out_dir of
+    `experiments/vae/lc${model.latent_channels}_b${objective.beta}` is filled from
+    the model/objective sections). Note: they resolve config-internal values only,
+    not CLI overrides — overriding e.g. --latent_channels on the CLI does not
+    retro-update an interpolated out_dir.
+    """
+    from omegaconf import OmegaConf
+
+    cfg = OmegaConf.load(path)
+    raw = cast(dict, OmegaConf.to_container(cfg, resolve=True))  # resolve ${...} on the full tree
     flat = {}
     for key, val in raw.items():
         if isinstance(val, dict):       # section -> merge its keys
@@ -360,57 +431,45 @@ def load_config(path):
     return flat
 
 
-def parse_args():
-    # First resolve --config so it can supply argparse defaults.
-    pre = argparse.ArgumentParser(add_help=False)
-    pre.add_argument("-c","--config", default=None,
-                     help="YAML config (configs/vae_train.yaml); CLI overrides it")
-    pre_args, _ = pre.parse_known_args()
-    cfg = load_config(pre_args.config) if pre_args.config else {}
-
-    p = argparse.ArgumentParser(
-        parents=[pre], description=__doc__,
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    # io  (not required= : may be supplied by --config; validated below)
-    p.add_argument("--data_path", default=None, help="path to patches_vae.h5")
-    p.add_argument("--out_dir", default=None, help="run output directory")
+# Built-in defaults for any key the config omits. The config file is the only
+# way to override these — there are no per-setting CLI flags.
+_DEFAULTS = {
+    # io (data_path / out_dir are required — no default, validated below)
+    "data_path": None, "out_dir": None,
     # split
-    p.add_argument("--val_frac", type=float, default=0.25)
-    p.add_argument("--n_bins", type=int, default=10, help="phi strata for the split")
+    "val_frac": 0.25, "n_bins": 10,
     # model
-    p.add_argument("--latent_channels", type=int, default=8)
-    p.add_argument("--base_channels", type=int, default=32)
-    p.add_argument("--channel_mult", type=int, nargs="+", default=[1, 2, 4, 4])
-    p.add_argument("--attn_ds", type=int, nargs="+", default=[4, 8])
-    p.add_argument("--attn_heads", type=int, default=1)
+    "in_channels": 1, "dims": 2, "spatial_latent": True,
+    "latent_channels": 8, "base_channels": 32,
+    "channel_mult": [1, 2, 4, 4], "attn_ds": [4, 8], "attn_heads": 1,
     # objective
-    p.add_argument("--recon", choices=["mse", "bce"], default="mse",
-                   help="reconstruction loss; bce uses {0,1} targets + logits, "
-                        "mse uses {-1,1}")
-    p.add_argument("--beta", type=float, default=5e-2, help="max KL weight")
-    p.add_argument("--beta_warmup_steps", type=int, default=1000)
+    "recon": "mse", "beta": 5e-2, "beta_warmup_steps": 1000,
     # optim
-    p.add_argument("--lr", type=float, default=1e-3)
-    p.add_argument("--weight_decay", type=float, default=1e-5)
-    p.add_argument("--grad_clip", type=float, default=1.0)
-    p.add_argument("--batch_size", type=int, default=64)
-    p.add_argument("--total_steps", type=int, default=30000)
+    "lr": 1e-3, "weight_decay": 1e-5, "grad_clip": 1.0,
+    "batch_size": 64, "total_steps": 30000,
     # runtime
-    p.add_argument("--num_workers", type=int, default=8)
-    p.add_argument("--log_interval", type=int, default=200)
-    p.add_argument("--save_interval", type=int, default=0,
-                   help="checkpoint every N steps (0 = only final)")
-    p.add_argument("--no_amp", action="store_true", help="disable mixed precision")
-    p.add_argument("--seed", type=int, default=0)
+    "num_workers": 8, "log_interval": 200, "save_interval": 0,
+    "sample_interval": 1000, "no_amp": False, "seed": 0,
+}
 
-    # config supplies defaults; explicit CLI flags still win
-    p.set_defaults(**cfg)
-    args = p.parse_args()
 
+def parse_args():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("-c", "--config", required=True,
+                   help="YAML config (configs/vae_train.yaml) — sole source of settings")
+    cli = p.parse_args()
+
+    cfg = load_config(cli.config)
+    unknown = set(cfg) - set(_DEFAULTS)
+    if unknown:
+        p.error(f"unknown config keys: {sorted(unknown)}")
+    args = argparse.Namespace(config=cli.config, **{**_DEFAULTS, **cfg})
+
+    if args.recon not in ("mse", "bce"):
+        p.error(f"recon must be 'mse' or 'bce', got {args.recon!r}")
     missing = [k for k in ("data_path", "out_dir") if getattr(args, k) is None]
     if missing:
-        p.error(f"missing required {missing} — set via --config or CLI")
+        p.error(f"missing required {missing} — set them in {cli.config}")
     return args
 
 
