@@ -387,6 +387,16 @@ def main():
 
     vae.train()
     t0 = time.time()
+
+    if viz_batch is not None:
+        val_rec0, val_iou0, val_dice0 = eval_metrics(vae, val_loader, DEVICE, args.recon)
+        writer.add_scalar("val/recon", val_rec0, 0)
+        writer.add_scalar("val/IoU", val_iou0, 0)
+        writer.add_scalar("val/Dice", val_dice0, 0)
+        save_recon_samples(vae, viz_batch, DEVICE, args.recon,
+                           os.path.join(sample_dir, "recon_000000"),
+                           writer=writer, step=0)
+
     for step in range(args.total_steps + 1):
         x, _phi = next(data_iter)
         x = x.to(DEVICE, non_blocking=True)
