@@ -381,7 +381,7 @@ def main():
 
     history = {k: [] for k in
                ("step", "loss", "recon", "val_recon", "val_iou", "val_dice",
-                "kl", "beta", "sigma_mean")}
+                "kl", "beta", "sigma_mean", "val_mu_per_ch", "val_sigma_per_ch")}
     
     data_iter = cycle(train_loader)
 
@@ -431,6 +431,8 @@ def main():
             history["kl"].append(kl.item())
             history["beta"].append(beta)
             history["sigma_mean"].append(sigma_mean)
+            history["val_mu_per_ch"].append(val_mu_ch.tolist())
+            history["val_sigma_per_ch"].append(val_sig_ch.tolist())
             ips = (step + 1) * args.batch_size / (time.time() - t0)
             print(
                 f"step {step:>6}/{args.total_steps}  loss={loss.item():.4f}  "
