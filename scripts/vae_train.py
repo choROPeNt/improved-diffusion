@@ -195,6 +195,37 @@ def eval_metrics(model, loader, device, recon):
 
 
 @torch.no_grad()
+def eval_latent_stats(model, loader, device):
+    """Per-latent-channel mean mu and sigma over the full val set.
+
+    Returns two 1-D CPU tensors of shape [C] — one for mu, one for sigma.
+    Spatial dimensions (H', W') are averaged before accumulating so the
+    result is one scalar per channel regardless of spatial_latent setting.
+    """
+    was_training = model.training
+    model.eval()
+    mu_acc, sig_acc, n = None, None, 0
+    for x, _phi in loader:
+        x = x.to(device, non_blocking=True)
+        mu, logvar, _ = model.encode(x)
+        sigma = logvar.mul(0.5).exp()
+        # collapse spatial dims -> [B, C]
+        mu_flat = mu.flatten(2).mean(-1) if mu.ndim > 2 else mu
+        sig_flat = sigma.flatten(2).mean(-1) if sigma.ndim > 2 else sigma
+        if mu_acc is None:
+            mu_acc = mu_flat.sum(0).cpu()
+            sig_acc = sig_flat.sum(0).cpu()
+        else:
+            mu_acc += mu_flat.sum(0).cpu()
+            sig_acc += sig_flat.sum(0).cpu()
+        n += x.shape[0]
+    if was_training:
+        model.train()
+    assert mu_acc is not None and sig_acc is not None, "val loader was empty"
+    return mu_acc / n, sig_acc / n   # [C]
+
+
+@torch.no_grad()
 def save_recon_samples(model, batch, device, recon, path_stem, n=8, save_png=True,
                        writer=None, step=None):
     """Save reconstruction samples next to <path_stem>.
@@ -380,6 +411,7 @@ def main():
         if step % args.log_interval == 0:
             sigma_mean = logvar.mul(0.5).exp().mean().item()
             val_rec, val_iou, val_dice = eval_metrics(vae, val_loader, DEVICE, args.recon)
+            val_mu_ch, val_sig_ch = eval_latent_stats(vae, val_loader, DEVICE)
             history["step"].append(step)
             history["loss"].append(loss.item())
             history["recon"].append(rec.item())
@@ -397,6 +429,10 @@ def main():
                 f"sig={sigma_mean:.3f}  beta={beta:.1e}  {ips:.0f} img/s",
                 flush=True,
             )
+            mu_str = "  ".join(f"ch{c}={val_mu_ch[c]:.3f}" for c in range(len(val_mu_ch)))
+            sig_str = "  ".join(f"ch{c}={val_sig_ch[c]:.3f}" for c in range(len(val_sig_ch)))
+            print(f"  [val latent mu ] {mu_str}", flush=True)
+            print(f"  [val latent sig] {sig_str}", flush=True)
             writer.add_scalar("loss/total", loss.item(), step)
             writer.add_scalar("loss/recon", rec.item(), step)
             writer.add_scalar("loss/kl", kl.item(), step)
@@ -405,6 +441,9 @@ def main():
             writer.add_scalar("val/Dice", val_dice, step)
             writer.add_scalar("train/sigma_mean", sigma_mean, step)
             writer.add_scalar("train/beta", beta, step)
+            for c in range(len(val_mu_ch)):
+                writer.add_scalar(f"val/latent_mu_ch{c:02d}", val_mu_ch[c].item(), step)
+                writer.add_scalar(f"val/latent_sigma_ch{c:02d}", val_sig_ch[c].item(), step)
 
         if viz_batch is not None and step % args.sample_interval == 0:
             stem = os.path.join(sample_dir, f"recon_{step:06d}")

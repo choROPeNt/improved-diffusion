@@ -5,7 +5,7 @@
 data:
   # data_path / out_dir are required — set them here or pass on the CLI.
   data_path: data/patches_vae.h5
-  out_dir:   experiments/vae/lc${model.latent_channels}_b${objective.beta}
+  out_dir:   experiments/vae/lc${model.latent_channels}_b${objective.beta}_
   val_frac:  0.25          # held-out fraction
   n_bins:    10            # phi strata for the stratified split
 
@@ -13,7 +13,7 @@ model:
   in_channels:      1            # input volume channels (1 = single-modality)
   dims:             2            # spatial rank: 2 -> Conv2d, 3 -> Conv3d
   spatial_latent:   true         # project bottleneck -> latent_channels via 1x1 conv (per-pixel KL); false = global pooled vector
-  latent_channels:  8            # z channels in spatial latent mode; latent is [B, latent_channels, *spatial/ds]
+  latent_channels:  4            # z channels in spatial latent mode; latent is [B, latent_channels, *spatial/ds]
   base_channels:    32           # channels at the highest resolution (stage 0)
   channel_mult:     [1, 2, 4, 4] # per-stage channel multiplier; len = #stages, #downsamples = len-1 (here ds up to 8x)
   attn_ds:          [4, 8]       # downsample factors at which to insert self-attention (e.g. 8 -> the /8 stage)
@@ -23,7 +23,7 @@ model:
 
 objective:
   recon:             bce    # mse ({-1,1} targets) | bce ({0,1} Bernoulli, crisper edges)
-  beta:              0.1   # max KL weight
+  beta:              0.5   # max KL weight
   beta_warmup_steps: 300   # linear warmup of beta (in steps)
 
 optim:
